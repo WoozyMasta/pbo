@@ -1,0 +1,4 @@
+github.com/woozymasta/lzss v0.1.6 h1:s+kbMv06YDRzuWOhj0+Wwx6WFuXPDiIMZ0eK1LUwftU=
+github.com/woozymasta/lzss v0.1.6/go.mod h1:3P9MZicG+a7UJ+4m4x+QWFgnvKI9Vgd7oobmu5DOFsw=
+github.com/woozymasta/pathrules v0.1.2 h1:RXETYaAaADfyJEJkbMVUaVcmPkbtpALWwXClO6Ssvtc=
+github.com/woozymasta/pathrules v0.1.2/go.mod h1:80PI6so6HaHEs1JKqYjI50NH/IUediJkdygKIfMbuIc=
