@@ -144,6 +144,31 @@ if err != nil {
 }
 ```
 
+### Reader filters
+
+`OpenWithOptions` and `ListEntriesWithOptions` support entry filters for
+noisy/obfuscated archives.
+
+```go
+r, err := pbo.OpenWithOptions("addon.pbo", pbo.ReaderOptions{
+  MinEntryOriginalSize: 12,   // logical original size (fallback to DataSize)
+  MinEntryDataSize:     0,    // packed size threshold
+  EntryPathPrefix:      "scripts/4_world",
+  FilterASCIIOnly:      false,
+  SanitizeControlChars: true, // safe textual output
+  SanitizeNames:        true, // filesystem-safe normalized paths
+})
+if err != nil {
+  return err
+}
+defer r.Close()
+
+// Extract uses parsed entries by default.
+if err := r.Extract(ctx, "out", pbo.ExtractOptions{MaxWorkers: 4}); err != nil {
+  return err
+}
+```
+
 ### Edit existing PBO
 
 Use `OpenEditor` for transactional changes to an existing archive.

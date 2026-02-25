@@ -51,6 +51,21 @@ For filesystem-safe listing names:
 	}
 	_ = entries
 
+For noisy or obfuscated archives, combine entry filters:
+
+	r, err := pbo.OpenWithOptions("addon.pbo", pbo.ReaderOptions{
+	    MinEntryOriginalSize: 12,
+	    MinEntryDataSize:     0,
+	    EntryPathPrefix:      "scripts/4_world",
+	    FilterASCIIOnly:      false,
+	    SanitizeControlChars: true,
+	    SanitizeNames:        true,
+	})
+	if err != nil {
+	    return err
+	}
+	defer r.Close()
+
 For archives with meaningful non-zero index offsets, use compatibility mode:
 
 	r, err := pbo.OpenWithOptions("addon.pbo", pbo.ReaderOptions{
