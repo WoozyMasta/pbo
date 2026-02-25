@@ -35,6 +35,9 @@ func TestSanitizePathSegment(t *testing.T) {
 		want string
 	}{
 		{in: "CON.txt", want: "_CON.txt"},
+		{in: "  COM8.c  ", want: "_COM8.c"},
+		{in: ".{22877a6d-37a1-461a-91b0-dbda5aaebc99}", want: "_{22877a6d-37a1-461a-91b0-dbda5aaebc99}"},
+		{in: "abc.{22877a6d-37a1-461a-91b0-dbda5aaebc99}", want: "abc_{22877a6d-37a1-461a-91b0-dbda5aaebc99}"},
 		{in: "a:b?.txt", want: "a_b_.txt"},
 		{in: "name. ", want: "name"},
 		{in: "AUX:", want: "_AUX_"},
@@ -43,6 +46,10 @@ func TestSanitizePathSegment(t *testing.T) {
 		{in: "POINTER$.txt", want: "_POINTER$.txt"},
 		{in: "$ADDSTOR", want: "_$ADDSTOR"},
 		{in: "82164A:", want: "_82164A_"},
+		{in: "a\x1b[31m.txt", want: "a_[31m.txt"},
+		{in: "name\u009b0m.txt", want: "name_0m.txt"},
+		{in: "a\x7fb.txt", want: "a_b.txt"},
+		{in: "a\u200fb.txt", want: "a_b.txt"},
 	}
 
 	for _, tc := range testCases {
@@ -100,6 +107,60 @@ func TestSanitizeEntryInfoPathsCollision(t *testing.T) {
 	}
 }
 
+func TestSanitizeEntryInfoPaths_MangledPaths(t *testing.T) {
+	t.Parallel()
+
+	entries := []EntryInfo{
+		{Path: `\\\\\:\`},
+		{Path: `..\evil.txt`},
+		{Path: `scripts\4_world\abc.{22877a6d-37a1-461a-91b0-dbda5aaebc99}\COM8.c`},
+	}
+
+	got, err := sanitizeEntryInfoPaths(entries)
+	if err != nil {
+		t.Fatalf("sanitizeEntryInfoPaths: %v", err)
+	}
+
+	if got[0].Path != "_" {
+		t.Fatalf("got[0]=%q, want _", got[0].Path)
+	}
+
+	if got[1].Path != "_/evil.txt" {
+		t.Fatalf("got[1]=%q, want _/evil.txt", got[1].Path)
+	}
+
+	if got[2].Path != "scripts/4_world/abc_{22877a6d-37a1-461a-91b0-dbda5aaebc99}/_COM8.c" {
+		t.Fatalf("got[2]=%q, want scripts/4_world/abc_{22877a6d-37a1-461a-91b0-dbda5aaebc99}/_COM8.c", got[2].Path)
+	}
+}
+
+func TestSanitizeEntryInfoControlPaths(t *testing.T) {
+	t.Parallel()
+
+	entries := []EntryInfo{
+		{Path: "a\x1b[31m.txt"},
+		{Path: "a\x1f[31m.txt"},
+		{Path: "scripts/\u200fname.c"},
+	}
+
+	got, err := sanitizeEntryInfoControlPaths(entries)
+	if err != nil {
+		t.Fatalf("sanitizeEntryInfoControlPaths: %v", err)
+	}
+
+	if got[0].Path != "a_[31m.txt" {
+		t.Fatalf("got[0]=%q, want a_[31m.txt", got[0].Path)
+	}
+
+	if got[1].Path != "a_[31m~2.txt" {
+		t.Fatalf("got[1]=%q, want a_[31m~2.txt", got[1].Path)
+	}
+
+	if got[2].Path != "scripts/_name.c" {
+		t.Fatalf("got[2]=%q, want scripts/_name.c", got[2].Path)
+	}
+}
+
 func TestListEntriesWithOptionsSanitizeNames(t *testing.T) {
 	t.Parallel()
 
@@ -123,6 +184,67 @@ func TestListEntriesWithOptionsSanitizeNames(t *testing.T) {
 	}
 	if sanitized[0].Path != "_CON.txt" || sanitized[1].Path != "a_b.txt" || sanitized[2].Path != "a_b~2.txt" {
 		t.Fatalf("unexpected sanitized paths: %#v", sanitized)
+	}
+}
+
+func TestOpenWithOptionsSanitizeNames(t *testing.T) {
+	t.Parallel()
+
+	path := createManualPBOWithNamedEntries(t, []manualEntry{
+		{name: "CON.txt", data: []byte("a")},
+		{name: "a:b.txt", data: []byte("b")},
+		{name: "a?b.txt", data: []byte("c")},
+	})
+
+	r, err := OpenWithOptions(path, ReaderOptions{SanitizeNames: true})
+	if err != nil {
+		t.Fatalf("OpenWithOptions sanitize: %v", err)
+	}
+	defer func() { _ = r.Close() }()
+
+	entries := r.Entries()
+	if len(entries) != 3 {
+		t.Fatalf("len(entries)=%d, want 3", len(entries))
+	}
+
+	if entries[0].Path != "_CON.txt" || entries[1].Path != "a_b.txt" || entries[2].Path != "a_b~2.txt" {
+		t.Fatalf("unexpected sanitized paths: %#v", entries)
+	}
+
+	got, err := r.ReadEntry("_CON.txt")
+	if err != nil {
+		t.Fatalf("ReadEntry sanitized path: %v", err)
+	}
+	if !bytes.Equal(got, []byte("a")) {
+		t.Fatalf("ReadEntry sanitized path got %q, want %q", got, []byte("a"))
+	}
+}
+
+func TestOpenWithOptionsSanitizeControlChars(t *testing.T) {
+	t.Parallel()
+
+	path := createManualPBOWithNamedEntries(t, []manualEntry{
+		{name: "a\x1b[31m.txt", data: []byte("a")},
+		{name: "scripts\\\u200fname.c", data: []byte("b")},
+	})
+
+	r, err := OpenWithOptions(path, ReaderOptions{SanitizeControlChars: true})
+	if err != nil {
+		t.Fatalf("OpenWithOptions sanitize control chars: %v", err)
+	}
+	defer func() { _ = r.Close() }()
+
+	entries := r.Entries()
+	if len(entries) != 2 {
+		t.Fatalf("len(entries)=%d, want 2", len(entries))
+	}
+
+	if entries[0].Path != "a_[31m.txt" {
+		t.Fatalf("entries[0].Path=%q, want a_[31m.txt", entries[0].Path)
+	}
+
+	if entries[1].Path != "scripts/_name.c" {
+		t.Fatalf("entries[1].Path=%q, want scripts/_name.c", entries[1].Path)
 	}
 }
 

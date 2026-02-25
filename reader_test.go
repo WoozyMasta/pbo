@@ -609,12 +609,59 @@ func TestExtract_RejectsUnsafeEntryPaths(t *testing.T) {
 			defer func() { _ = r.Close() }()
 
 			extDir := t.TempDir()
-			err = r.Extract(context.Background(), extDir, ExtractOptions{MaxWorkers: 2})
+			err = r.Extract(context.Background(), extDir, ExtractOptions{
+				MaxWorkers: 2,
+				RawNames:   true,
+			})
 			if err == nil {
 				t.Fatalf("expected extraction error for entry path %q", tc.entryPath)
 			}
 			if !errors.Is(err, ErrInvalidExtractPath) {
 				t.Fatalf("expected ErrInvalidExtractPath, got %v", err)
+			}
+		})
+	}
+}
+
+func TestExtract_SanitizesUnsafeEntryPaths(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name      string
+		entryPath string
+		wantPath  string
+	}{
+		{name: "dot-dot slash", entryPath: "../evil.txt", wantPath: filepath.Join("_", "evil.txt")},
+		{name: "dot-dot backslash", entryPath: `..\evil.txt`, wantPath: filepath.Join("_", "evil.txt")},
+		{name: "absolute slash", entryPath: "/absolute.txt", wantPath: "absolute.txt"},
+		{name: "absolute backslash", entryPath: `\absolute.txt`, wantPath: "absolute.txt"},
+		{name: "windows drive", entryPath: `C:\absolute.txt`, wantPath: filepath.Join("C_", "absolute.txt")},
+		{name: "mangled separators", entryPath: `\\\\\:\`, wantPath: "_"},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			pboPath := createManualPBOWithEntryPath(t, tc.entryPath, []byte("hello"))
+			r, err := Open(pboPath)
+			if err != nil {
+				t.Fatalf("Open: %v", err)
+			}
+			defer func() { _ = r.Close() }()
+
+			extDir := t.TempDir()
+			if err := r.Extract(context.Background(), extDir, ExtractOptions{MaxWorkers: 2}); err != nil {
+				t.Fatalf("Extract sanitize: %v", err)
+			}
+
+			got, err := os.ReadFile(filepath.Join(extDir, tc.wantPath))
+			if err != nil {
+				t.Fatalf("read sanitized file %s: %v", tc.wantPath, err)
+			}
+			if !bytes.Equal(got, []byte("hello")) {
+				t.Fatalf("sanitized output %s=%q, want hello", tc.wantPath, got)
 			}
 		})
 	}

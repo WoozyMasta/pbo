@@ -182,13 +182,59 @@ func (r *Reader) parse(ra io.ReaderAt, size int64, opts ReaderOptions) error {
 	if err != nil {
 		return err
 	}
-
 	r.dataStart = entriesEnd
+
+	// OffsetMode defines how payload offsets are resolved:
+	// sequential from payload start, stored offsets, or strict stored validation.
 	if err := resolveEntryOffsets(r.entries, entriesEnd, size, opts.OffsetMode); err != nil {
 		return err
 	}
+
+	// EnableJunkFilter drops clearly unusable table rows:
+	// zero-size entries, broken compressed rows, and unsafe/raw invalid paths.
 	if opts.EnableJunkFilter {
 		r.entries = filterJunkEntries(r.entries)
+	}
+
+	// MinEntryOriginalSize/MinEntryDataSize keep only entries above size thresholds.
+	// This removes tiny noise blobs before heavier path processing.
+	r.entries = filterEntriesBySize(r.entries, opts.MinEntryOriginalSize, opts.MinEntryDataSize)
+
+	// FilterASCIIOnly keeps only ASCII-path entries.
+	// Useful for quickly excluding heavily obfuscated unicode paths.
+	if opts.FilterASCIIOnly {
+		r.entries = filterEntriesByASCIIOnly(r.entries)
+	}
+
+	// EntryPathPrefix applies path scoping after cheap filters:
+	// with SanitizeNames=true we match in sanitized namespace so user-provided
+	// normalized prefixes still match mangled/raw archive names.
+	if opts.SanitizeNames {
+		r.entries = filterEntriesBySanitizedPrefix(r.entries, opts.EntryPathPrefix)
+	} else {
+		r.entries = filterEntriesByPrefix(r.entries, opts.EntryPathPrefix)
+	}
+
+	// SanitizeControlChars rewrites C0/C1 and format runes in path text.
+	// This prevents terminal/control-sequence injection in listing output.
+	if opts.SanitizeControlChars {
+		controlCharSanitizedEntries, sanitizeErr := sanitizeEntryInfoControlPaths(r.entries)
+		if sanitizeErr != nil {
+			return sanitizeErr
+		}
+
+		r.entries = controlCharSanitizedEntries
+	}
+
+	// SanitizeNames performs full filesystem-safe rewrite (reserved names, GUID suffix,
+	// illegal path chars, deterministic collision suffixes) for stable path-based access.
+	if opts.SanitizeNames {
+		sanitizedEntries, sanitizeErr := sanitizeEntryInfoPaths(r.entries)
+		if sanitizeErr != nil {
+			return sanitizeErr
+		}
+
+		r.entries = sanitizedEntries
 	}
 
 	// check for SHA1 trailer
@@ -471,31 +517,6 @@ func validateResolvedOffsets(entries []EntryInfo, dataStart int64, totalSize int
 	}
 
 	return nil
-}
-
-// filterJunkEntries removes malformed or unusable entries from parsed table.
-func filterJunkEntries(entries []EntryInfo) []EntryInfo {
-	if len(entries) == 0 {
-		return entries
-	}
-
-	filtered := make([]EntryInfo, 0, len(entries))
-	for i := range entries {
-		e := entries[i]
-		if e.DataSize == 0 {
-			continue
-		}
-		if e.MimeType == MimeCompress && e.OriginalSize == 0 {
-			continue
-		}
-		if _, err := normalizeExtractEntryPath(e.Path); err != nil {
-			continue
-		}
-
-		filtered = append(filtered, e)
-	}
-
-	return filtered
 }
 
 // readNullTerminatedBuffered reads a NUL-terminated string from buffered stream.

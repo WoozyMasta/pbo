@@ -175,10 +175,21 @@ const (
 type ReaderOptions struct {
 	// OffsetMode controls whether stored index offsets are used.
 	OffsetMode OffsetMode `json:"offset_mode,omitempty" yaml:"offset_mode,omitempty"`
+	// EntryPathPrefix keeps entries whose normalized path is equal to prefix or starts with "prefix/".
+	EntryPathPrefix string `json:"entry_path_prefix,omitempty" yaml:"entry_path_prefix,omitempty"`
 	// EnableJunkFilter drops malformed/mangled entries from visible entry list.
 	EnableJunkFilter bool `json:"enable_junk_filter,omitempty" yaml:"enable_junk_filter,omitempty"`
+	// FilterASCIIOnly keeps only entries with ASCII-only path bytes.
+	FilterASCIIOnly bool `json:"filter_ascii_only,omitempty" yaml:"filter_ascii_only,omitempty"`
+	// SanitizeControlChars rewrites control/format runes in entry paths for safe textual output.
+	SanitizeControlChars bool `json:"sanitize_control_chars,omitempty" yaml:"sanitize_control_chars,omitempty"`
 	// SanitizeNames rewrites entry paths to filesystem-safe names for listing workflows.
 	SanitizeNames bool `json:"sanitize_names,omitempty" yaml:"sanitize_names,omitempty"`
+	// MinEntryOriginalSize keeps entries with original size >= this value.
+	// For uncompressed entries OriginalSize is treated as DataSize.
+	MinEntryOriginalSize uint32 `json:"min_entry_original_size,omitempty" yaml:"min_entry_original_size,omitempty"`
+	// MinEntryDataSize keeps entries with packed payload size >= this value.
+	MinEntryDataSize uint32 `json:"min_entry_data_size,omitempty" yaml:"min_entry_data_size,omitempty"`
 }
 
 // ExtractOptions configures Extract behavior.

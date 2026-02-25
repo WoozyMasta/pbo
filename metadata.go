@@ -95,6 +95,21 @@ func ListEntriesFromReaderAtWithOptions(ra io.ReaderAt, size int64, opts ReaderO
 	if opts.EnableJunkFilter {
 		r.entries = filterJunkEntries(r.entries)
 	}
+	r.entries = filterEntriesBySize(r.entries, opts.MinEntryOriginalSize, opts.MinEntryDataSize)
+	if opts.FilterASCIIOnly {
+		r.entries = filterEntriesByASCIIOnly(r.entries)
+	}
+	if opts.SanitizeNames {
+		r.entries = filterEntriesBySanitizedPrefix(r.entries, opts.EntryPathPrefix)
+	} else {
+		r.entries = filterEntriesByPrefix(r.entries, opts.EntryPathPrefix)
+	}
+	if opts.SanitizeControlChars {
+		r.entries, err = sanitizeEntryInfoControlPaths(r.entries)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	entries := r.entries
 	if opts.SanitizeNames {
