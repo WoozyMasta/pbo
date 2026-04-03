@@ -13,6 +13,21 @@ and this project adheres to [Semantic Versioning][].
 ### Removed
 -->
 
+## [0.2.0][] - 2026-04-04
+
+### Added
+
+* Optional sealed archive mode for read/write flows via package options.
+
+### Changed
+
+* Entry lookup for `OpenEntry` now uses a lazy normalized-path index instead
+  of linear scan.
+* Extraction is now fail-fast by default and can be switched to
+  continue-on-error mode via `ExtractOptions.ContinueOnError`.
+
+[0.2.0]: https://github.com/WoozyMasta/pbo/compare/v0.1.1...v0.2.0
+
 ## [0.1.1][] - 2026-02-25
 
 ### Added
