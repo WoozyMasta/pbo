@@ -18,6 +18,8 @@ const (
 var (
 	// benchListSink prevents compiler elimination in list benchmark loops.
 	benchListSink int
+	// benchLookupSink prevents compiler elimination in lookup benchmark loops.
+	benchLookupSink uint32
 )
 
 func BenchmarkOpenParse(b *testing.B) {
@@ -89,6 +91,61 @@ func BenchmarkListLargeIndex(b *testing.B) {
 	}
 }
 
+func BenchmarkLookupEntryLinearLargeIndex(b *testing.B) {
+	path := createBenchLargeIndexPBO(b, benchLargeIndexEntries)
+	r, err := Open(path)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer func() { _ = r.Close() }()
+
+	names := benchmarkLookupNames(r.entries)
+	if len(names) == 0 {
+		b.Fatal("empty lookup names")
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		name := names[i%len(names)]
+		info := linearFindEntryByName(r.entries, name)
+		if info == nil {
+			b.Fatalf("entry not found: %s", name)
+		}
+
+		benchLookupSink = info.Offset
+	}
+}
+
+func BenchmarkLookupEntryIndexedLargeIndex(b *testing.B) {
+	path := createBenchLargeIndexPBO(b, benchLargeIndexEntries)
+	r, err := Open(path)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer func() { _ = r.Close() }()
+
+	names := benchmarkLookupNames(r.entries)
+	if len(names) == 0 {
+		b.Fatal("empty lookup names")
+	}
+
+	// Build index once outside benchmark loop.
+	_ = r.findEntryByName(names[0])
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		name := names[i%len(names)]
+		info := r.findEntryByName(name)
+		if info == nil {
+			b.Fatalf("entry not found: %s", name)
+		}
+
+		benchLookupSink = info.Offset
+	}
+}
+
 // benchmarkExtractWithSanitize benchmarks full extract flow with optional path sanitization.
 func benchmarkExtractWithSanitize(b *testing.B, sanitizeNames bool) {
 	path := createBenchPBO(b, benchDefaultEntries)
@@ -113,6 +170,41 @@ func benchmarkExtractWithSanitize(b *testing.B, sanitizeNames bool) {
 			b.Fatal(err)
 		}
 	}
+}
+
+// benchmarkLookupNames returns deterministic lookup sample for index benchmarks.
+func benchmarkLookupNames(entries []EntryInfo) []string {
+	if len(entries) == 0 {
+		return nil
+	}
+
+	const sampleSize = 2048
+	names := make([]string, 0, sampleSize)
+	step := len(entries) / sampleSize
+	if step < 1 {
+		step = 1
+	}
+
+	for i := 0; i < len(entries); i += step {
+		names = append(names, entries[i].Path)
+		if len(names) >= sampleSize {
+			break
+		}
+	}
+
+	return names
+}
+
+// linearFindEntryByName is a benchmark-only baseline for O(n) path lookup.
+func linearFindEntryByName(entries []EntryInfo, name string) *EntryInfo {
+	lookupName := NormalizePath(name)
+	for i := range entries {
+		if NormalizePath(entries[i].Path) == lookupName {
+			return &entries[i]
+		}
+	}
+
+	return nil
 }
 
 func BenchmarkComputeHashSetLargeIndex(b *testing.B) {
