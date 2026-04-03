@@ -93,8 +93,6 @@ func OpenWithOptions(path string, opts ReaderOptions) (*Reader, error) {
 	}
 
 	r.file = f
-	r.ra = f
-	r.size = fi.Size()
 	return r, nil
 }
 
@@ -107,8 +105,13 @@ func NewReaderFromReaderAt(ra io.ReaderAt, size int64) (*Reader, error) {
 func NewReaderFromReaderAtWithOptions(ra io.ReaderAt, size int64, opts ReaderOptions) (*Reader, error) {
 	opts.applyDefaults()
 
-	r := &Reader{ra: ra, size: size}
-	if err := r.parse(ra, size, opts); err != nil {
+	readerAt, err := prepareReaderAtWithSealedOptions(ra, size, opts.SealedKey)
+	if err != nil {
+		return nil, err
+	}
+
+	r := &Reader{ra: readerAt, size: size}
+	if err := r.parse(readerAt, size, opts); err != nil {
 		return nil, err
 	}
 

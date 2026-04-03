@@ -16,6 +16,8 @@ var (
 	ErrNilReader = errors.New("reader is nil")
 	// ErrReaderAtRequired means operation requires io.ReaderAt support.
 	ErrReaderAtRequired = errors.New("readerAt is required")
+	// ErrWriterAtRequired means operation requires io.WriterAt support.
+	ErrWriterAtRequired = errors.New("writerAt is required")
 	// ErrNilWriter means the writer is nil.
 	ErrNilWriter = errors.New("writer is nil")
 	// ErrEntryNotFound means the entry is not found.

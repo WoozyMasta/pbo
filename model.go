@@ -94,6 +94,9 @@ type HeaderPair struct {
 	Value string `json:"value" yaml:"value"`
 }
 
+// SealedKey is a fixed 16-byte key used by optional sealed transform mode.
+type SealedKey [16]byte
+
 // PackEntryProgress contains one completed entry write event from pack flow.
 type PackEntryProgress struct {
 	// Path is entry path written to archive.
@@ -118,6 +121,9 @@ type PackOptions struct {
 	OnEntryDone func(entry PackEntryProgress) `json:"-" yaml:"-"`
 	// Headers are written in deterministic order.
 	Headers []HeaderPair `json:"headers,omitempty" yaml:"headers,omitempty"`
+	// SealedKey enables sealed archive transform when set.
+	// Nil keeps standard plain PBO read/write behavior.
+	SealedKey *SealedKey `json:"sealed_key,omitempty" yaml:"sealed_key,omitempty"`
 	// Compress defines ordered path rules for compression candidate selection.
 	Compress []pathrules.Rule `json:"compress,omitempty" yaml:"compress,omitempty"`
 	// CompressMatcherOptions control compression path rule matching.
@@ -176,10 +182,18 @@ const (
 
 // ReaderOptions configures reader parse compatibility behavior.
 type ReaderOptions struct {
+	// SealedKey enables sealed archive decode when set.
+	// Nil keeps standard plain PBO read behavior.
+	SealedKey *SealedKey `json:"sealed_key,omitempty" yaml:"sealed_key,omitempty"`
 	// OffsetMode controls whether stored index offsets are used.
 	OffsetMode OffsetMode `json:"offset_mode,omitempty" yaml:"offset_mode,omitempty"`
 	// EntryPathPrefix keeps entries whose normalized path is equal to prefix or starts with "prefix/".
 	EntryPathPrefix string `json:"entry_path_prefix,omitempty" yaml:"entry_path_prefix,omitempty"`
+	// MinEntryOriginalSize keeps entries with original size >= this value.
+	// For uncompressed entries OriginalSize is treated as DataSize.
+	MinEntryOriginalSize uint32 `json:"min_entry_original_size,omitempty" yaml:"min_entry_original_size,omitempty"`
+	// MinEntryDataSize keeps entries with packed payload size >= this value.
+	MinEntryDataSize uint32 `json:"min_entry_data_size,omitempty" yaml:"min_entry_data_size,omitempty"`
 	// EnableJunkFilter drops malformed/mangled entries from visible entry list.
 	EnableJunkFilter bool `json:"enable_junk_filter,omitempty" yaml:"enable_junk_filter,omitempty"`
 	// FilterASCIIOnly keeps only entries with ASCII-only path bytes.
@@ -188,11 +202,6 @@ type ReaderOptions struct {
 	SanitizeControlChars bool `json:"sanitize_control_chars,omitempty" yaml:"sanitize_control_chars,omitempty"`
 	// SanitizeNames rewrites entry paths to filesystem-safe names for listing workflows.
 	SanitizeNames bool `json:"sanitize_names,omitempty" yaml:"sanitize_names,omitempty"`
-	// MinEntryOriginalSize keeps entries with original size >= this value.
-	// For uncompressed entries OriginalSize is treated as DataSize.
-	MinEntryOriginalSize uint32 `json:"min_entry_original_size,omitempty" yaml:"min_entry_original_size,omitempty"`
-	// MinEntryDataSize keeps entries with packed payload size >= this value.
-	MinEntryDataSize uint32 `json:"min_entry_data_size,omitempty" yaml:"min_entry_data_size,omitempty"`
 }
 
 // ExtractOptions configures Extract behavior.

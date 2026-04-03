@@ -554,6 +554,10 @@ func rewriteArchiveDetailed(
 		pos += 20
 	}
 
+	if err := applySealedTransformToWriteSeeker(out, opts.SealedKey); err != nil {
+		return nil, err
+	}
+
 	return &rewriteArchiveResult{
 		packResult: &PackResult{
 			WrittenEntries:            len(written),

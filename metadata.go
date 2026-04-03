@@ -12,17 +12,29 @@ import (
 
 // ReadHeaders opens a PBO and returns only header key-value pairs without parsing entry table.
 func ReadHeaders(path string) ([]HeaderPair, error) {
+	return ReadHeadersWithOptions(path, ReaderOptions{})
+}
+
+// ReadHeadersWithOptions opens a PBO and returns only header key-value pairs using reader options.
+func ReadHeadersWithOptions(path string, opts ReaderOptions) ([]HeaderPair, error) {
 	f, size, err := openFileWithSize(path)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = f.Close() }()
 
-	return ReadHeadersFromReaderAt(f, size)
+	return ReadHeadersFromReaderAtWithOptions(f, size, opts)
 }
 
 // ReadHeadersFromReaderAt reads only PBO header key-value pairs from a random-access source.
 func ReadHeadersFromReaderAt(ra io.ReaderAt, size int64) ([]HeaderPair, error) {
+	return ReadHeadersFromReaderAtWithOptions(ra, size, ReaderOptions{})
+}
+
+// ReadHeadersFromReaderAtWithOptions reads only PBO header key-value pairs from a random-access source.
+func ReadHeadersFromReaderAtWithOptions(ra io.ReaderAt, size int64, opts ReaderOptions) ([]HeaderPair, error) {
+	opts.applyDefaults()
+
 	if ra == nil {
 		return nil, ErrNilReader
 	}
@@ -30,7 +42,12 @@ func ReadHeadersFromReaderAt(ra io.ReaderAt, size int64) ([]HeaderPair, error) {
 		return nil, fmt.Errorf("%w: short header", ErrInvalidHeader)
 	}
 
-	_, headers, _, err := parseHeaderSection(ra)
+	readerAt, err := prepareReaderAtWithSealedOptions(ra, size, opts.SealedKey)
+	if err != nil {
+		return nil, err
+	}
+
+	_, headers, _, err := parseHeaderSection(readerAt)
 	if err != nil {
 		return nil, err
 	}
@@ -78,13 +95,18 @@ func ListEntriesFromReaderAtWithOptions(ra io.ReaderAt, size int64, opts ReaderO
 		return nil, fmt.Errorf("%w: short header", ErrInvalidHeader)
 	}
 
-	_, _, tableOffset, err := parseHeaderSection(ra)
+	readerAt, err := prepareReaderAtWithSealedOptions(ra, size, opts.SealedKey)
+	if err != nil {
+		return nil, err
+	}
+
+	_, _, tableOffset, err := parseHeaderSection(readerAt)
 	if err != nil {
 		return nil, err
 	}
 
 	r := &Reader{}
-	entriesEnd, err := r.parseEntriesBuffered(ra, tableOffset, size)
+	entriesEnd, err := r.parseEntriesBuffered(readerAt, tableOffset, size)
 	if err != nil {
 		return nil, err
 	}

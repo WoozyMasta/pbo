@@ -200,7 +200,10 @@ func (e *Editor) commitFromBackup(ctx context.Context, backupPath string) (*Pack
 		return nil, fmt.Errorf("stat backup: %w", err)
 	}
 
-	srcReader, err := NewReaderFromReaderAt(srcFile, srcInfo.Size())
+	packOpts := e.opts.PackOptions
+	srcReader, err := NewReaderFromReaderAtWithOptions(srcFile, srcInfo.Size(), ReaderOptions{
+		SealedKey: packOpts.SealedKey,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("parse backup: %w", err)
 	}
@@ -210,7 +213,6 @@ func (e *Editor) commitFromBackup(ctx context.Context, backupPath string) (*Pack
 		return nil, err
 	}
 
-	packOpts := e.opts.PackOptions
 	if len(packOpts.Headers) == 0 {
 		packOpts.Headers = srcReader.Headers()
 	}
@@ -220,7 +222,7 @@ func (e *Editor) commitFromBackup(ctx context.Context, backupPath string) (*Pack
 		return nil, fmt.Errorf("create destination archive: %w", err)
 	}
 
-	res, writeErr := rewriteArchive(ctx, dstFile, srcFile, plan, packOpts)
+	res, writeErr := rewriteArchive(ctx, dstFile, srcReader.ra, plan, packOpts)
 	if writeErr != nil {
 		_ = dstFile.Close()
 		return nil, writeErr
