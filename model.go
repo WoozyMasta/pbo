@@ -11,6 +11,9 @@ import (
 	"github.com/woozymasta/pathrules"
 )
 
+// FileExtension is the PBO file extension.
+const FileExtension = ".pbo"
+
 // Internal binary layout and format limits.
 const (
 	headerSize = 21      // fixed PBO header size in bytes
