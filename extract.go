@@ -26,7 +26,8 @@ type extractWorkItem struct {
 }
 
 // Extract writes selected entries from the PBO to dstDir. Extraction is parallelized
-// by MaxWorkers; on failure it returns the first encountered error.
+// by MaxWorkers. By default extraction is fail-fast; set ContinueOnError to keep
+// processing and return the first encountered error at the end.
 func (r *Reader) Extract(ctx context.Context, dstDir string, opts ExtractOptions) error {
 	if r == nil || r.ra == nil {
 		return ErrNilReader
@@ -92,10 +93,31 @@ func (r *Reader) Extract(ctx context.Context, dstDir string, opts ExtractOptions
 		return err
 	}
 
-	taskCh := make(chan extractWorkItem, len(workItems))
-	errCh := make(chan error, len(workItems))
+	taskBufferSize := max(workers*2, 1)
+
+	taskCh := make(chan extractWorkItem, taskBufferSize)
+	var errCh chan error
+	if opts.ContinueOnError {
+		errCh = make(chan error, len(workItems))
+	}
+
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+
+	var (
+		firstErr     error
+		firstErrOnce sync.Once
+	)
+
+	storeFirstErr := func(err error) {
+		if err == nil {
+			return
+		}
+
+		firstErrOnce.Do(func() {
+			firstErr = err
+		})
+	}
 
 	var wg sync.WaitGroup
 	for w := 0; w < workers; w++ {
@@ -103,37 +125,57 @@ func (r *Reader) Extract(ctx context.Context, dstDir string, opts ExtractOptions
 			copyBuf := make([]byte, extractCopyBufferSize)
 			for task := range taskCh {
 				err := r.extractPreparedEntry(ctx, dstRootAbs, task, fileMode, copyBuf, opts.OnEntryDone)
-				select {
-				case errCh <- err:
-				case <-ctx.Done():
+				if err == nil {
+					continue
+				}
+
+				if !opts.ContinueOnError {
+					storeFirstErr(err)
+					cancel()
 					return
+				}
+
+				if errCh != nil {
+					select {
+					case errCh <- err:
+					case <-ctx.Done():
+						return
+					}
 				}
 			}
 		})
 	}
 
+enqueueLoop:
 	for _, task := range workItems {
 		select {
 		case <-ctx.Done():
-			close(taskCh)
-			wg.Wait()
-			return ctx.Err()
+			break enqueueLoop
 		case taskCh <- task:
 		}
 	}
 
 	close(taskCh)
 	wg.Wait()
-	close(errCh)
+	if errCh != nil {
+		close(errCh)
+	}
 
-	var first error
-	for err := range errCh {
-		if err != nil && first == nil {
-			first = err
+	if errCh != nil {
+		for err := range errCh {
+			storeFirstErr(err)
 		}
 	}
 
-	return first
+	if firstErr != nil {
+		return firstErr
+	}
+
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // prepareExtractWorkItems validates selected entries and prepares relative fs paths.

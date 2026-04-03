@@ -25,13 +25,29 @@ func (nopCloser) Close() error {
 // findEntryByName resolves one entry by normalized path.
 func (r *Reader) findEntryByName(name string) *EntryInfo {
 	lookupName := NormalizePath(name)
-	for i := range r.entries {
-		if NormalizePath(r.entries[i].Path) == lookupName {
-			return &r.entries[i]
-		}
+	r.entryIndexOnce.Do(r.buildEntryIndex)
+
+	idx, ok := r.entryIndex[lookupName]
+	if !ok {
+		return nil
 	}
 
-	return nil
+	return &r.entries[idx]
+}
+
+// buildEntryIndex builds normalized path lookup index for parsed entries.
+func (r *Reader) buildEntryIndex() {
+	index := make(map[string]int, len(r.entries))
+	for i := range r.entries {
+		key := NormalizePath(r.entries[i].Path)
+		if _, exists := index[key]; exists {
+			continue
+		}
+
+		index[key] = i
+	}
+
+	r.entryIndex = index
 }
 
 // openEntryByInfo opens payload stream for already resolved entry metadata.

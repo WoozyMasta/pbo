@@ -524,6 +524,113 @@ func TestExtract_DefaultModeRewritesExistingFiles(t *testing.T) {
 	}
 }
 
+func TestExtract_DefaultFailFastStopsAfterFirstError(t *testing.T) {
+	t.Parallel()
+
+	outPath := filepath.Join(t.TempDir(), "multi.pbo")
+	inputs := []Input{
+		{
+			Path: "a.txt",
+			Open: func() (io.ReadCloser, error) {
+				return io.NopCloser(bytes.NewReader([]byte("A"))), nil
+			},
+		},
+		{
+			Path: "b.txt",
+			Open: func() (io.ReadCloser, error) {
+				return io.NopCloser(bytes.NewReader([]byte("B"))), nil
+			},
+		},
+	}
+
+	if _, err := PackFile(context.Background(), outPath, inputs, PackOptions{}); err != nil {
+		t.Fatalf("PackFile: %v", err)
+	}
+
+	r, err := Open(outPath)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = r.Close() }()
+
+	extDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(extDir, "a.txt"), []byte("stale"), 0o600); err != nil {
+		t.Fatalf("write stale a.txt: %v", err)
+	}
+
+	err = r.Extract(context.Background(), extDir, ExtractOptions{
+		MaxWorkers: 1,
+		FileMode:   ExtractFileModeCreateOnly,
+	})
+	if err == nil {
+		t.Fatal("expected create-only extraction error")
+	}
+
+	if !os.IsExist(err) && !errors.Is(err, fs.ErrExist) {
+		t.Fatalf("expected already-exists error, got %v", err)
+	}
+
+	if _, statErr := os.Stat(filepath.Join(extDir, "b.txt")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("b.txt must not be extracted in fail-fast mode, stat err = %v", statErr)
+	}
+}
+
+func TestExtract_ContinueOnErrorExtractsRemainingEntries(t *testing.T) {
+	t.Parallel()
+
+	outPath := filepath.Join(t.TempDir(), "multi.pbo")
+	inputs := []Input{
+		{
+			Path: "a.txt",
+			Open: func() (io.ReadCloser, error) {
+				return io.NopCloser(bytes.NewReader([]byte("A"))), nil
+			},
+		},
+		{
+			Path: "b.txt",
+			Open: func() (io.ReadCloser, error) {
+				return io.NopCloser(bytes.NewReader([]byte("B"))), nil
+			},
+		},
+	}
+
+	if _, err := PackFile(context.Background(), outPath, inputs, PackOptions{}); err != nil {
+		t.Fatalf("PackFile: %v", err)
+	}
+
+	r, err := Open(outPath)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = r.Close() }()
+
+	extDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(extDir, "a.txt"), []byte("stale"), 0o600); err != nil {
+		t.Fatalf("write stale a.txt: %v", err)
+	}
+
+	err = r.Extract(context.Background(), extDir, ExtractOptions{
+		MaxWorkers:      1,
+		FileMode:        ExtractFileModeCreateOnly,
+		ContinueOnError: true,
+	})
+	if err == nil {
+		t.Fatal("expected create-only extraction error")
+	}
+
+	if !os.IsExist(err) && !errors.Is(err, fs.ErrExist) {
+		t.Fatalf("expected already-exists error, got %v", err)
+	}
+
+	got, readErr := os.ReadFile(filepath.Join(extDir, "b.txt"))
+	if readErr != nil {
+		t.Fatalf("read extracted b.txt: %v", readErr)
+	}
+	if !bytes.Equal(got, []byte("B")) {
+		t.Fatalf("b.txt = %q, want B", got)
+	}
+}
+
 func TestExtract_OverwriteSmart_TruncatesOnlyWhenNeeded(t *testing.T) {
 	t.Parallel()
 

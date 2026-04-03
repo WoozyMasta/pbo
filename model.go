@@ -210,6 +210,9 @@ type ExtractOptions struct {
 	OnEntryDone func(entry EntryInfo, written int64, outputPath string) `json:"-" yaml:"-"`
 	// FileMode controls output file creation policy.
 	FileMode ExtractFileMode `json:"file_mode,omitempty" yaml:"file_mode,omitempty"`
+	// ContinueOnError keeps extraction running when one or more entries fail.
+	// Default false is fail-fast mode.
+	ContinueOnError bool `json:"continue_on_error,omitempty" yaml:"continue_on_error,omitempty"`
 	// Entries limits extraction to selected metadata list; nil means all parsed entries.
 	Entries []EntryInfo `json:"-" yaml:"-"`
 	// MaxWorkers is number of extraction workers (zero means GOMAXPROCS).

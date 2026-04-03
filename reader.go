@@ -44,12 +44,16 @@ type Reader struct {
 	headers []headerPair
 	// entries stores parsed immutable entry metadata.
 	entries []EntryInfo
+	// entryIndex maps normalized entry path to first matching entry index.
+	entryIndex map[string]int
 	// size is total source size in bytes.
 	size int64
 	// dataStart is absolute offset of first payload byte.
 	dataStart int64
 	// mu guards closed state and close operation.
 	mu sync.Mutex
+	// entryIndexOnce initializes entryIndex lazily on first path lookup.
+	entryIndexOnce sync.Once
 	// sha1Trailer stores optional trailer hash when present.
 	sha1Trailer [shaSize]byte
 	// hasTrailer reports whether trailing 0x00 + SHA1 was detected.
