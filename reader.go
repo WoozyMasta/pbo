@@ -38,22 +38,22 @@ type Reader struct {
 	ra io.ReaderAt
 	// file is set when Reader owns an *os.File opened via Open.
 	file *os.File
+	// entryIndex maps normalized entry path to first matching entry index.
+	entryIndex map[string]int
 	// header stores the fixed 21-byte PBO header block.
 	header []byte
 	// headers are kept in parse order for deterministic behavior.
 	headers []headerPair
 	// entries stores parsed immutable entry metadata.
 	entries []EntryInfo
-	// entryIndex maps normalized entry path to first matching entry index.
-	entryIndex map[string]int
 	// size is total source size in bytes.
 	size int64
 	// dataStart is absolute offset of first payload byte.
 	dataStart int64
-	// mu guards closed state and close operation.
-	mu sync.Mutex
 	// entryIndexOnce initializes entryIndex lazily on first path lookup.
 	entryIndexOnce sync.Once
+	// mu guards closed state and close operation.
+	mu sync.Mutex
 	// sha1Trailer stores optional trailer hash when present.
 	sha1Trailer [shaSize]byte
 	// hasTrailer reports whether trailing 0x00 + SHA1 was detected.

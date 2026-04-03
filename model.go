@@ -210,13 +210,13 @@ type ExtractOptions struct {
 	OnEntryDone func(entry EntryInfo, written int64, outputPath string) `json:"-" yaml:"-"`
 	// FileMode controls output file creation policy.
 	FileMode ExtractFileMode `json:"file_mode,omitempty" yaml:"file_mode,omitempty"`
-	// ContinueOnError keeps extraction running when one or more entries fail.
-	// Default false is fail-fast mode.
-	ContinueOnError bool `json:"continue_on_error,omitempty" yaml:"continue_on_error,omitempty"`
 	// Entries limits extraction to selected metadata list; nil means all parsed entries.
 	Entries []EntryInfo `json:"-" yaml:"-"`
 	// MaxWorkers is number of extraction workers (zero means GOMAXPROCS).
 	MaxWorkers int `json:"max_workers,omitempty" yaml:"max_workers,omitempty"`
+	// ContinueOnError keeps extraction running when one or more entries fail.
+	// Default false is fail-fast mode.
+	ContinueOnError bool `json:"continue_on_error,omitempty" yaml:"continue_on_error,omitempty"`
 	// RawNames disables default path sanitization during extract.
 	// When false (default), extract rewrites names to filesystem-safe output paths.
 	RawNames bool `json:"raw_names,omitempty" yaml:"raw_names,omitempty"`
