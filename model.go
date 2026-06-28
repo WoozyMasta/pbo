@@ -119,15 +119,15 @@ type PackEntryProgress struct {
 type PackOptions struct {
 	// OnEntryDone is called after one entry is fully written to archive payload.
 	OnEntryDone func(entry PackEntryProgress) `json:"-" yaml:"-"`
-	// Headers are written in deterministic order.
-	Headers []HeaderPair `json:"headers,omitempty" yaml:"headers,omitempty"`
 	// SealedKey enables sealed archive transform when set.
 	// Nil keeps standard plain PBO read/write behavior.
-	SealedKey *SealedKey `json:"sealed_key,omitempty" yaml:"sealed_key,omitempty"`
+	SealedKey        *SealedKey `json:"sealed_key,omitempty" yaml:"sealed_key,omitempty"`
+	// signHashGameType is the game type used for inline file hash during pack; set by PackAndHash*.
+	signHashGameType GameType
+	// Headers are written in deterministic order.
+	Headers []HeaderPair `json:"headers,omitempty" yaml:"headers,omitempty"`
 	// Compress defines ordered path rules for compression candidate selection.
 	Compress []pathrules.Rule `json:"compress,omitempty" yaml:"compress,omitempty"`
-	// CompressMatcherOptions control compression path rule matching.
-	CompressMatcherOptions pathrules.MatcherOptions `json:"compress_matcher_options,omitzero" yaml:"compress_matcher_options,omitzero"`
 	// WriterBufferSize is buffered writer size in bytes.
 	WriterBufferSize int `json:"writer_buffer_size,omitempty" yaml:"writer_buffer_size,omitempty"`
 	// MinCompressSize disables compression for entries smaller than this size.
@@ -136,13 +136,11 @@ type PackOptions struct {
 	// MaxCompressSize disables compression for entries larger than this size.
 	// Default is 16 MiB and also bounds known-size in-memory compression path.
 	MaxCompressSize uint32 `json:"max_compress_size,omitempty" yaml:"max_compress_size,omitempty"`
-
-	// signHashVersion and signHashGameType enable streaming fileHash computation during pack
-	// (tee eligible payload bytes to the hasher inline instead of re-reading later).
-	// Set internally by PackAndHash* only; zero value disables inline file hashing.
-	// Not applicable when SealedKey is set (sealed bytes differ from written bytes).
-	signHashVersion  SignVersion
-	signHashGameType GameType
+	// signHashVersion enables streaming fileHash computation during pack; set by PackAndHash*.
+	// Zero disables inline hashing. Not used when SealedKey is set.
+	signHashVersion SignVersion
+	// CompressMatcherOptions control compression path rule matching.
+	CompressMatcherOptions pathrules.MatcherOptions `json:"compress_matcher_options,omitzero" yaml:"compress_matcher_options,omitzero"`
 }
 
 // PackResult contains pack output statistics.

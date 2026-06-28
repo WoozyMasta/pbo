@@ -64,8 +64,8 @@ type rewriteArchiveResult struct {
 	headers       []HeaderPair
 	headerSection []byte // encoded header+KV pairs; used to avoid re-reading for hash1
 	indexBuf      []byte // final index block; used to avoid re-reading for hash1
-	dataStart     int64  // payload start offset in the written file
 	fileHash      []byte // inline file hash over sign-eligible packed bytes; nil when not requested
+	dataStart     int64  // payload start offset in the written file
 }
 
 // encodeHeaderSection re-encodes the header and KV pair bytes from memory.
