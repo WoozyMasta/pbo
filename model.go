@@ -121,7 +121,7 @@ type PackOptions struct {
 	OnEntryDone func(entry PackEntryProgress) `json:"-" yaml:"-"`
 	// SealedKey enables sealed archive transform when set.
 	// Nil keeps standard plain PBO read/write behavior.
-	SealedKey        *SealedKey `json:"sealed_key,omitempty" yaml:"sealed_key,omitempty"`
+	SealedKey *SealedKey `json:"sealed_key,omitempty" yaml:"sealed_key,omitempty"`
 	// signHashGameType is the game type used for inline file hash during pack; set by PackAndHash*.
 	signHashGameType GameType
 	// Headers are written in deterministic order.
