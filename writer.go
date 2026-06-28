@@ -12,7 +12,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -254,8 +254,8 @@ func preparePackRewritePlan(inputs []Input) ([]rewriteEntry, error) {
 		sorted[i].Path = normalizedPath
 	}
 
-	sort.Slice(sorted, func(i, j int) bool {
-		return sorted[i].Path < sorted[j].Path
+	slices.SortFunc(sorted, func(a, b Input) int {
+		return strings.Compare(a.Path, b.Path)
 	})
 
 	if err := validateUniqueEntryPaths(sorted); err != nil {
@@ -901,7 +901,8 @@ func checkedDataSize(path string, size int64, currentOffset uint32) (uint32, err
 func validateUniqueEntryPaths(inputs []Input) error {
 	seen := make(map[string]string, len(inputs))
 	for _, in := range inputs {
-		key := strings.ToLower(in.Path)
+		// asciiLower avoids allocation when path is already lowercase (common case).
+		key := asciiLower(in.Path)
 		if existing, ok := seen[key]; ok {
 			return fmt.Errorf("%w: %q conflicts with %q", ErrDuplicateEntryPath, in.Path, existing)
 		}
