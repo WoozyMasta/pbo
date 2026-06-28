@@ -361,9 +361,9 @@ func estimateEntryCapacity(remainingBytes int64) int {
 
 	const (
 		minCap = 128
-		maxCap = 8192
+		maxCap = 65536
 		// remainingBytes includes payload region, so keep estimate intentionally conservative.
-		avgEntryBytes = 512
+		avgEntryBytes = 256
 	)
 
 	estimated := int(remainingBytes / avgEntryBytes)
