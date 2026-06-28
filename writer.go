@@ -532,26 +532,21 @@ func rewriteArchiveDetailed(
 		return nil, fmt.Errorf("flush payloads: %w", err)
 	}
 
-	pos := entriesStart
-	var entryFields [20]byte
-	for i, item := range rewritePlan {
-		pos += int64(len(item.path) + 1)
-		if _, err := out.Seek(pos, io.SeekStart); err != nil {
-			return nil, fmt.Errorf("seek to entry %d: %w", i, err)
-		}
+	indexBuf := buildEntryIndexBlock(rewritePlan, written)
 
-		record := written[i]
-		binary.LittleEndian.PutUint32(entryFields[0:4], uint32(record.mime))
-		binary.LittleEndian.PutUint32(entryFields[4:8], record.originalSize)
-		// Common tooling emits zero in index offset and derives offsets sequentially.
-		binary.LittleEndian.PutUint32(entryFields[8:12], 0)
-		binary.LittleEndian.PutUint32(entryFields[12:16], record.timestamp)
-		binary.LittleEndian.PutUint32(entryFields[16:20], record.dataSize)
-		if _, err := out.Write(entryFields[:]); err != nil {
-			return nil, fmt.Errorf("patch entry %d: %w", i, err)
+	if wa, ok := out.(io.WriterAt); ok {
+		if n, err := wa.WriteAt(indexBuf, entriesStart); err != nil {
+			return nil, fmt.Errorf("write entry index: %w", err)
+		} else if n != len(indexBuf) {
+			return nil, io.ErrShortWrite
 		}
-
-		pos += 20
+	} else {
+		if _, err := out.Seek(entriesStart, io.SeekStart); err != nil {
+			return nil, fmt.Errorf("seek entry index: %w", err)
+		}
+		if _, err := out.Write(indexBuf); err != nil {
+			return nil, fmt.Errorf("write entry index: %w", err)
+		}
 	}
 
 	if err := applySealedTransformToWriteSeeker(out, opts.SealedKey); err != nil {
@@ -915,6 +910,36 @@ func validateUniqueEntryPaths(inputs []Input) error {
 	}
 
 	return nil
+}
+
+// buildEntryIndexBlock serializes the full entry index block
+// (paths + 20-byte field blocks + sentinel) into one contiguous buffer.
+// Caller writes it in a single operation to replace  previous per-entry seek/write patch loop.
+func buildEntryIndexBlock(plan []rewriteEntry, written []writtenEntry) []byte {
+	var n int
+	for _, item := range plan {
+		n += len(item.path) + 1 + 20
+	}
+	n += 1 + 20 // sentinel: null name + 20 zero fields (zero-init by make)
+
+	buf := make([]byte, n)
+	off := 0
+	for i, item := range plan {
+		off += copy(buf[off:], item.path)
+		buf[off] = 0
+		off++
+		record := written[i]
+		binary.LittleEndian.PutUint32(buf[off+0:off+4], uint32(record.mime))
+		binary.LittleEndian.PutUint32(buf[off+4:off+8], record.originalSize)
+		// Common tooling emits zero in index offset and derives offsets sequentially.
+		binary.LittleEndian.PutUint32(buf[off+8:off+12], 0)
+		binary.LittleEndian.PutUint32(buf[off+12:off+16], record.timestamp)
+		binary.LittleEndian.PutUint32(buf[off+16:off+20], record.dataSize)
+		off += 20
+	}
+
+	buf[off] = 0 // sentinel null name; remaining 20 bytes stay zero from make
+	return buf
 }
 
 // timeToUint32 converts time to uint32 Unix timestamp with bounds clamping.
