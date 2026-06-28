@@ -13,6 +13,46 @@ and this project adheres to [Semantic Versioning][].
 ### Removed
 -->
 
+## Unreleased
+
+### Added
+
+* `CopyEntryTo` and `CopyEntryInfoTo` -
+  push-model entry read API that decompresses directly into an `io.Writer`
+  without spawning a goroutine or pipe.
+  Suitable for `http.ResponseWriter` and `os.File` consumers.
+* Fuzz targets for the PBO parser, entry reader, and extract path
+  `FuzzNewReaderFromReaderAt`, `FuzzOpenEntry`, `FuzzExtract`.
+
+### Changed
+
+* Pack index is now written as a single pre-built block via `WriteAt`
+  (or `Seek`+`Write` fallback) instead of N separate seek+patch calls per entry.
+  Reduces system call count from 2N to 1 for large archives.
+* `PackFile` and `PackAndHashFile` no longer close
+  and reopen the output file to append the SHA1 trailer;
+  it is written inline via `WriteAt`.
+* `PackAndHash` and `PackAndHashFile` compute `hash1` from in-memory
+  header and index sections, re-reading only the payload region from disk.
+  Sign-eligible payload bytes are teed to the file-hash during the write pass,
+  eliminating a second file read for `fileHash`.
+* Archive entry paths from `filepath.Walk`/`filepath.Join` on Windows are
+  now detected as already canonical and skip the full normalization chain
+  (zero allocations for the common case).
+  Case-insensitive dedup uses `asciiLower` instead of `strings.ToLower`
+  to avoid allocations for already-lowercase paths.
+* `estimateEntryCapacity` cap raised from 8192 to 65536
+  to avoid multiple slice growths when reading large-index PBOs.
+* Extraction no longer spawns a goroutine and pipe per compressed entry;
+  decompression writes directly into the destination file
+  using the worker's existing copy buffer.
+
+### Fixed
+
+* `applySealedTransformToWriteSeeker` no longer asserts
+  `io.ReaderAt`/`io.WriterAt` when the sealed key is nil or disabled,
+  which previously caused `Pack` to fail with a plain `io.WriteSeeker` output.
+
 ## [0.2.0][] - 2026-04-04
 
 ### Added
