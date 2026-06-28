@@ -7,7 +7,6 @@ package pbo
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -247,12 +246,6 @@ func (r *Reader) extractPreparedEntry(
 
 	outPath := filepath.Join(dstRootAbs, task.relPath)
 
-	rc, err := r.openEntryByInfo(&task.entry, task.entry.Path)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = rc.Close() }()
-
 	expectedSize := int64(task.entry.DataSize)
 	if task.entry.OriginalSize > 0 {
 		expectedSize = int64(task.entry.OriginalSize)
@@ -263,7 +256,7 @@ func (r *Reader) extractPreparedEntry(
 		return fmt.Errorf("open %s: %w", task.entry.Path, err)
 	}
 
-	written, copyErr := copyExtractData(file, rc, copyBuf)
+	written, copyErr := r.copyEntryPayloadTo(&task.entry, file, copyBuf)
 	if copyErr == nil && needsTruncate {
 		if truncErr := file.Truncate(written); truncErr != nil {
 			_ = file.Close()
@@ -324,40 +317,6 @@ func openExtractFile(path string, mode ExtractFileMode, expectedSize int64) (*os
 		return file, false, err
 	default:
 		return nil, false, fmt.Errorf("unknown extract file mode %q", mode)
-	}
-}
-
-// copyExtractData copies one entry stream to output file using fixed worker buffer.
-func copyExtractData(dst *os.File, src io.Reader, buf []byte) (int64, error) {
-	if len(buf) == 0 {
-		return 0, io.ErrShortBuffer
-	}
-
-	var total int64
-	for {
-		readN, readErr := src.Read(buf)
-		if readN > 0 {
-			writeN, writeErr := dst.Write(buf[:readN])
-			total += int64(writeN)
-
-			if writeErr != nil {
-				return total, writeErr
-			}
-
-			if writeN != readN {
-				return total, io.ErrShortWrite
-			}
-		}
-
-		if readErr == nil {
-			continue
-		}
-
-		if readErr == io.EOF {
-			return total, nil
-		}
-
-		return total, readErr
 	}
 }
 

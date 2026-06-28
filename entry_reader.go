@@ -133,6 +133,65 @@ func streamDecompressEntry(name string, dst *io.PipeWriter, src io.Reader, outLe
 	_ = dst.Close()
 }
 
+// copyEntryPayloadTo copies one entry payload (decompressing if needed) directly into dst
+// without spawning a goroutine or pipe. buf is used for uncompressed copies; nil is safe.
+// For compressed entries the lzss package manages its own internal buffer.
+func (r *Reader) copyEntryPayloadTo(info *EntryInfo, dst io.Writer, buf []byte) (int64, error) {
+	sr := io.NewSectionReader(r.ra, int64(info.Offset), int64(info.DataSize))
+	if !info.IsCompressed() {
+		return io.CopyBuffer(dst, sr, buf)
+	}
+
+	outLen, err := checkedUint32ToInt(info.OriginalSize)
+	if err != nil {
+		return 0, fmt.Errorf("resolve output size for %s: %w", info.Path, err)
+	}
+
+	return lzss.DecompressToWriter(dst, sr, outLen, nil)
+}
+
+// CopyEntryTo decompresses and copies the named entry into dst using the provided buf.
+// Unlike OpenEntry, it does not spawn a goroutine or pipe, making it more efficient
+// for callers that only need to push entry content into an io.Writer (os.File, http.ResponseWriter).
+// buf may be nil; a default buffer is used for the uncompressed path.
+func (r *Reader) CopyEntryTo(name string, dst io.Writer, buf []byte) (int64, error) {
+	if r == nil || r.ra == nil {
+		return 0, ErrNilReader
+	}
+
+	r.mu.Lock()
+	closed := r.closed
+	r.mu.Unlock()
+	if closed {
+		return 0, ErrClosed
+	}
+
+	info := r.findEntryByName(name)
+	if info == nil {
+		return 0, fmt.Errorf("%w: %s", ErrEntryNotFound, name)
+	}
+
+	return r.copyEntryPayloadTo(info, dst, buf)
+}
+
+// CopyEntryInfoTo decompresses and copies entry described by info into dst using the provided buf.
+// Unlike OpenEntryInfo, it does not spawn a goroutine or pipe.
+// buf may be nil; a default buffer is used for the uncompressed path.
+func (r *Reader) CopyEntryInfoTo(info EntryInfo, dst io.Writer, buf []byte) (int64, error) {
+	if r == nil || r.ra == nil {
+		return 0, ErrNilReader
+	}
+
+	r.mu.Lock()
+	closed := r.closed
+	r.mu.Unlock()
+	if closed {
+		return 0, ErrClosed
+	}
+
+	return r.copyEntryPayloadTo(&info, dst, buf)
+}
+
 // checkedUint32ToInt converts uint32 to int with platform-safe overflow check.
 func checkedUint32ToInt(v uint32) (int, error) {
 	if uint64(v) > uint64(math.MaxInt) {
