@@ -101,6 +101,10 @@ func applySealedTransformToWriteSeeker(out io.WriteSeeker, sealedKeyValue *Seale
 		return ErrNilWriter
 	}
 
+	if !parseSealedKey(sealedKeyValue).enabled {
+		return nil
+	}
+
 	ra, ok := out.(io.ReaderAt)
 	if !ok {
 		return ErrReaderAtRequired
