@@ -525,3 +525,96 @@ func copyBenchFile(src string, dst string) error {
 
 	return os.WriteFile(dst, data, 0o600)
 }
+
+// seekBuffer is a minimal in-memory WriteSeeker for benchmarks that need
+// Seek(0, SeekCurrent) to return the current write position. It does NOT
+// implement WriteAt, so it exercises the Seek+Write fallback path in Pack.
+type seekBuffer struct {
+	buf []byte
+	pos int
+}
+
+func (s *seekBuffer) Write(p []byte) (int, error) {
+	needed := s.pos + len(p)
+	if needed > len(s.buf) {
+		s.buf = append(s.buf, make([]byte, needed-len(s.buf))...)
+	}
+	copy(s.buf[s.pos:], p)
+	s.pos += len(p)
+	return len(p), nil
+}
+
+func (s *seekBuffer) Seek(offset int64, whence int) (int64, error) {
+	var abs int64
+	switch whence {
+	case io.SeekStart:
+		abs = offset
+	case io.SeekCurrent:
+		abs = int64(s.pos) + offset
+	case io.SeekEnd:
+		abs = int64(len(s.buf)) + offset
+	default:
+		return 0, fmt.Errorf("seekBuffer: invalid whence %d", whence)
+	}
+	if abs < 0 {
+		return 0, fmt.Errorf("seekBuffer: negative position")
+	}
+	s.pos = int(abs)
+	return abs, nil
+}
+
+// BenchmarkPackLargeIndexMemory packs 52,536 entries into an in-memory seekable
+// buffer. Isolates index-build and patch-loop CPU cost from disk I/O. Uses the
+// Seek+Write fallback path (seekBuffer does not implement WriteAt).
+func BenchmarkPackLargeIndexMemory(b *testing.B) {
+	inputs := makeLargeIndexInputs(b)
+	opts := PackOptions{}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		var sb seekBuffer
+		if _, err := Pack(context.Background(), &sb, inputs, opts); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// BenchmarkPackLargeIndexFile packs 52,536 entries into a real *os.File.
+// Exercises the WriteAt fast path (once the patch-loop fix lands) and includes
+// actual disk I/O cost.
+func BenchmarkPackLargeIndexFile(b *testing.B) {
+	inputs := makeLargeIndexInputs(b)
+	opts := PackOptions{}
+	dir := b.TempDir()
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		out := filepath.Join(dir, fmt.Sprintf("large%d.pbo", i))
+		f, err := os.Create(out)
+		if err != nil {
+			b.Fatal(err)
+		}
+		_, packErr := Pack(context.Background(), f, inputs, opts)
+		_ = f.Close()
+		if packErr != nil {
+			b.Fatal(packErr)
+		}
+	}
+}
+
+// makeLargeIndexInputs builds the 52,536-entry input slice used by large-index pack benchmarks.
+func makeLargeIndexInputs(b *testing.B) []Input {
+	b.Helper()
+	inputs := make([]Input, benchLargeIndexEntries)
+	open := benchOpenBytes(bytes.Repeat([]byte("x"), 96))
+	for i := range inputs {
+		inputs[i] = Input{
+			Path:     benchmarkLargePath(i),
+			Open:     open,
+			SizeHint: 96,
+		}
+	}
+	return inputs
+}
