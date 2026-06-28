@@ -604,6 +604,24 @@ func BenchmarkPackLargeIndexFile(b *testing.B) {
 	}
 }
 
+// BenchmarkPackAndHashFileLargeIndex measures PackAndHashFile end-to-end with 52,536 entries.
+// It includes hash1 computation (only payload region re-read) and inline trailer write.
+func BenchmarkPackAndHashFileLargeIndex(b *testing.B) {
+	inputs := makeLargeIndexInputs(b)
+	opts := PackOptions{}
+	dir := b.TempDir()
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		out := filepath.Join(dir, fmt.Sprintf("large%d.pbo", i))
+		_, _, err := PackAndHashFile(context.Background(), out, inputs, opts, SignVersionV3, GameTypeDayZ)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 // makeLargeIndexInputs builds the 52,536-entry input slice used by large-index pack benchmarks.
 func makeLargeIndexInputs(b *testing.B) []Input {
 	b.Helper()

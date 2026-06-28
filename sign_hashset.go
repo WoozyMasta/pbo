@@ -117,6 +117,22 @@ func computeSignHash1(ra io.ReaderAt, size int64, hasTrailer bool) ([]byte, erro
 	return h.Sum(nil), nil
 }
 
+// computeHash1FromSections computes SHA1 over the full PBO content using in-memory sections.
+// headerSection and indexBuf are hashed from memory;
+// only the payload region [dataStart, fileEnd) is read from ra.
+// This avoids re-reading the header and index for files produced by Pack.
+func computeHash1FromSections(headerSection, indexBuf []byte, ra io.ReaderAt, dataStart, fileEnd int64) ([]byte, error) {
+	h := sha1.New() //nolint:gosec // Trailer and signature format requires SHA1.
+	h.Write(headerSection)
+	h.Write(indexBuf)
+
+	if _, err := io.Copy(h, io.NewSectionReader(ra, dataStart, fileEnd-dataStart)); err != nil {
+		return nil, err
+	}
+
+	return h.Sum(nil), nil
+}
+
 // writeSignPrefix appends normalized prefix fragment used by hash2/hash3.
 func writeSignPrefix(h io.Writer, prefix string) {
 	if prefix == "" {

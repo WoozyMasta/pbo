@@ -136,6 +136,13 @@ type PackOptions struct {
 	// MaxCompressSize disables compression for entries larger than this size.
 	// Default is 16 MiB and also bounds known-size in-memory compression path.
 	MaxCompressSize uint32 `json:"max_compress_size,omitempty" yaml:"max_compress_size,omitempty"`
+
+	// signHashVersion and signHashGameType enable streaming fileHash computation during pack
+	// (tee eligible payload bytes to the hasher inline instead of re-reading later).
+	// Set internally by PackAndHash* only; zero value disables inline file hashing.
+	// Not applicable when SealedKey is set (sealed bytes differ from written bytes).
+	signHashVersion  SignVersion
+	signHashGameType GameType
 }
 
 // PackResult contains pack output statistics.

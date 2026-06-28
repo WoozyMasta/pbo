@@ -8,8 +8,10 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha1" //nolint:gosec // Signature format requires SHA1.
 	"encoding/binary"
 	"fmt"
+	"hash"
 	"io"
 	"os"
 	"slices"
@@ -57,9 +59,31 @@ type rewriteEntry struct {
 
 // rewriteArchiveResult contains rewrite core result and written metadata.
 type rewriteArchiveResult struct {
-	packResult *PackResult
-	entries    []EntryInfo
-	headers    []HeaderPair
+	packResult    *PackResult
+	entries       []EntryInfo
+	headers       []HeaderPair
+	headerSection []byte // encoded header+KV pairs; used to avoid re-reading for hash1
+	indexBuf      []byte // final index block; used to avoid re-reading for hash1
+	dataStart     int64  // payload start offset in the written file
+	fileHash      []byte // inline file hash over sign-eligible packed bytes; nil when not requested
+}
+
+// encodeHeaderSection re-encodes the header and KV pair bytes from memory.
+// This avoids re-reading the file to hash the header section when computing hash1.
+func encodeHeaderSection(header []byte, headers []HeaderPair) []byte {
+	n := len(header) + 1
+	for _, h := range headers {
+		n += len(h.Key) + 1 + len(h.Value) + 1
+	}
+	buf := make([]byte, 0, n)
+	buf = append(buf, header...)
+	for _, h := range headers {
+		buf = append(buf, h.Key...)
+		buf = append(buf, 0)
+		buf = append(buf, h.Value...)
+		buf = append(buf, 0)
+	}
+	return append(buf, 0)
 }
 
 // Pack writes a PBO to out from the given inputs.
@@ -81,6 +105,10 @@ func Pack(ctx context.Context, out io.WriteSeeker, inputs []Input, opts PackOpti
 
 // PackFile writes a PBO to outPath and appends a SHA1 trailer.
 func PackFile(ctx context.Context, outPath string, inputs []Input, opts PackOptions) (*PackResult, error) {
+	if len(inputs) == 0 {
+		return nil, ErrEmptyInputs
+	}
+
 	f, err := os.OpenFile(outPath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("create PBO file: %w", err)
@@ -91,9 +119,31 @@ func PackFile(ctx context.Context, outPath string, inputs []Input, opts PackOpti
 		}
 	}()
 
-	res, err := Pack(ctx, f, inputs, opts)
+	opts.applyDefaults()
+	rewritePlan, err := preparePackRewritePlan(inputs)
 	if err != nil {
 		return nil, err
+	}
+
+	details, err := rewriteArchiveDetailed(ctx, f, nil, rewritePlan, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	fileEnd, err := f.Seek(0, io.SeekEnd)
+	if err != nil {
+		return nil, fmt.Errorf("seek end for trailer: %w", err)
+	}
+
+	hash1, err := computeHash1FromSections(details.headerSection, details.indexBuf, f, details.dataStart, fileEnd)
+	if err != nil {
+		return nil, fmt.Errorf("compute SHA1 trailer: %w", err)
+	}
+
+	var trailer [21]byte
+	copy(trailer[1:], hash1)
+	if _, err := f.WriteAt(trailer[:], fileEnd); err != nil {
+		return nil, fmt.Errorf("write SHA1 trailer: %w", err)
 	}
 
 	if err := f.Sync(); err != nil {
@@ -105,11 +155,7 @@ func PackFile(ctx context.Context, outPath string, inputs []Input, opts PackOpti
 	}
 	f = nil
 
-	if err := writeSHA1Trailer(outPath); err != nil {
-		return nil, fmt.Errorf("write SHA1 trailer: %w", err)
-	}
-
-	return res, nil
+	return details.packResult, nil
 }
 
 // PackAndHash writes a PBO to out and calculates hash set over written bytes.
@@ -142,6 +188,8 @@ func PackAndHash(
 	}
 
 	opts.applyDefaults()
+	opts.signHashVersion = signVersion
+	opts.signHashGameType = gameType
 	rewritePlan, err := preparePackRewritePlan(inputs)
 	if err != nil {
 		return nil, hs, err
@@ -152,23 +200,31 @@ func PackAndHash(
 		return nil, hs, err
 	}
 
-	size, err := out.Seek(0, io.SeekEnd)
+	fileEnd, err := out.Seek(0, io.SeekEnd)
 	if err != nil {
 		return nil, hs, fmt.Errorf("seek end for hash: %w", err)
 	}
 
-	hs, err = computeHashSetFromPackedParts(
-		ra,
-		size,
-		false,
-		details.headers,
-		details.entries,
-		signVersion,
-		gameType,
-	)
+	hash1, err := computeHash1FromSections(details.headerSection, details.indexBuf, ra, details.dataStart, fileEnd)
 	if err != nil {
-		return nil, hs, err
+		return nil, hs, fmt.Errorf("hash1: %w", err)
 	}
+
+	nameHash := computeSignNameHash(details.entries)
+
+	// Use inline file hash from pack when available; fall back to re-read for sealed PBOs.
+	fileHash := details.fileHash
+	if fileHash == nil {
+		fileHash, err = computeSignFileHashFromReaderAt(ra, details.entries, signVersion, gameType)
+		if err != nil {
+			return nil, hs, fmt.Errorf("file hash: %w", err)
+		}
+	}
+
+	prefix := pboPrefixFromHeaders(details.headers)
+	copy(hs.Hash1[:], hash1)
+	copy(hs.Hash2[:], computeSignHash2(hash1, nameHash, prefix))
+	copy(hs.Hash3[:], computeSignHash3(fileHash, nameHash, prefix))
 
 	return details.packResult, hs, nil
 }
@@ -184,6 +240,14 @@ func PackAndHashFile(
 ) (*PackResult, HashSet, error) {
 	var hs HashSet
 
+	if len(inputs) == 0 {
+		return nil, hs, ErrEmptyInputs
+	}
+
+	if err := validateSignHashArgs(signVersion, gameType); err != nil {
+		return nil, hs, err
+	}
+
 	f, err := os.OpenFile(outPath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return nil, hs, fmt.Errorf("create PBO file: %w", err)
@@ -194,9 +258,49 @@ func PackAndHashFile(
 		}
 	}()
 
-	res, hs, err := PackAndHash(ctx, f, inputs, opts, signVersion, gameType)
+	opts.applyDefaults()
+	opts.signHashVersion = signVersion
+	opts.signHashGameType = gameType
+	rewritePlan, err := preparePackRewritePlan(inputs)
 	if err != nil {
 		return nil, hs, err
+	}
+
+	details, err := rewriteArchiveDetailed(ctx, f, nil, rewritePlan, opts)
+	if err != nil {
+		return nil, hs, err
+	}
+
+	fileEnd, err := f.Seek(0, io.SeekEnd)
+	if err != nil {
+		return nil, hs, fmt.Errorf("seek end for hash: %w", err)
+	}
+
+	hash1, err := computeHash1FromSections(details.headerSection, details.indexBuf, f, details.dataStart, fileEnd)
+	if err != nil {
+		return nil, hs, fmt.Errorf("hash1: %w", err)
+	}
+
+	nameHash := computeSignNameHash(details.entries)
+
+	// Use inline file hash from pack when available; fall back to re-read for sealed PBOs.
+	fileHash := details.fileHash
+	if fileHash == nil {
+		fileHash, err = computeSignFileHashFromReaderAt(f, details.entries, signVersion, gameType)
+		if err != nil {
+			return nil, hs, fmt.Errorf("file hash: %w", err)
+		}
+	}
+
+	prefix := pboPrefixFromHeaders(details.headers)
+	copy(hs.Hash1[:], hash1)
+	copy(hs.Hash2[:], computeSignHash2(hash1, nameHash, prefix))
+	copy(hs.Hash3[:], computeSignHash3(fileHash, nameHash, prefix))
+
+	var trailer [21]byte
+	copy(trailer[1:], hash1)
+	if _, err := f.WriteAt(trailer[:], fileEnd); err != nil {
+		return nil, hs, fmt.Errorf("write SHA1 trailer: %w", err)
 	}
 
 	if err := f.Sync(); err != nil {
@@ -208,11 +312,7 @@ func PackAndHashFile(
 	}
 	f = nil
 
-	if err := writeSHA1Trailer(outPath); err != nil {
-		return nil, hs, fmt.Errorf("write SHA1 trailer: %w", err)
-	}
-
-	return res, hs, nil
+	return details.packResult, hs, nil
 }
 
 // acquirePackWriter returns a buffered writer and release callback for Pack.
@@ -454,6 +554,18 @@ func rewriteArchiveDetailed(
 	copyBuf, releaseCopyBuffer := acquirePackCopyBuffer()
 	defer releaseCopyBuffer()
 
+	// Streaming file hash: tee sign-eligible payload bytes inline during write.
+	// Disabled for sealed PBOs (on-disk bytes differ from written bytes after sealing).
+	var (
+		hfHasher    hash.Hash
+		hfTeeWriter io.Writer // io.MultiWriter(w, hfHasher); created once and reused
+		hfHashedAny bool
+	)
+	if opts.signHashVersion != 0 && !parseSealedKey(opts.SealedKey).enabled {
+		hfHasher = sha1.New() //nolint:gosec
+		hfTeeWriter = io.MultiWriter(w, hfHasher)
+	}
+
 	appendWrittenEntry := func(path string, record writtenEntry) {
 		entryInfo := EntryInfo{
 			Path:         path,
@@ -498,12 +610,22 @@ func rewriteArchiveDetailed(
 			return nil, err
 		}
 
+		// Select write target: tee to file hasher for sign-eligible entries.
+		entryDst := io.Writer(w)
+		if hfHasher != nil {
+			eligible, _ := shouldHashFileForSign(opts.signHashVersion, opts.signHashGameType, item.path)
+			if eligible {
+				entryDst = hfTeeWriter
+				hfHashedAny = true
+			}
+		}
+
 		if item.source != nil {
 			if src == nil {
 				return nil, ErrNilReader
 			}
 
-			record, err := writeSourcePackedPayload(w, src, item.path, *item.source, currentOffset, copyBuf)
+			record, err := writeSourcePackedPayload(entryDst, src, item.path, *item.source, currentOffset, copyBuf)
 			if err != nil {
 				return nil, err
 			}
@@ -514,7 +636,7 @@ func rewriteArchiveDetailed(
 		}
 
 		record, err := writeRewriteInputPayload(
-			w,
+			entryDst,
 			item,
 			opts,
 			compressMatcher,
@@ -530,6 +652,18 @@ func rewriteArchiveDetailed(
 
 	if err := w.Flush(); err != nil {
 		return nil, fmt.Errorf("flush payloads: %w", err)
+	}
+
+	var fileHash []byte
+	if hfHasher != nil {
+		if !hfHashedAny {
+			if opts.signHashVersion == SignVersionV2 {
+				_, _ = hfHasher.Write([]byte("nothing"))
+			} else {
+				_, _ = hfHasher.Write([]byte("gnihton"))
+			}
+		}
+		fileHash = hfHasher.Sum(nil)
 	}
 
 	indexBuf := buildEntryIndexBlock(rewritePlan, written)
@@ -564,8 +698,12 @@ func rewriteArchiveDetailed(
 			SkippedCompressionEntries: skippedCompressionEntries,
 			Duration:                  time.Since(startedAt),
 		},
-		entries: entries,
-		headers: writtenHeaders,
+		entries:       entries,
+		headers:       writtenHeaders,
+		headerSection: encodeHeaderSection(header, writtenHeaders),
+		indexBuf:      indexBuf,
+		dataStart:     dataStart,
+		fileHash:      fileHash,
 	}, nil
 }
 
