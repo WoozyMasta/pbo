@@ -137,7 +137,7 @@ type PackOptions struct {
 	// Default is 16 MiB and also bounds known-size in-memory compression path.
 	MaxCompressSize uint32 `json:"max_compress_size,omitempty" yaml:"max_compress_size,omitempty"`
 	// signHashVersion enables streaming fileHash computation during pack; set by PackAndHash*.
-	// Zero disables inline hashing. Not used when SealedKey is set.
+	// Zero disables inline hashing. Skipped for sealed PBOs (bytes change after sealing).
 	signHashVersion SignVersion
 	// CompressMatcherOptions control compression path rule matching.
 	CompressMatcherOptions pathrules.MatcherOptions `json:"compress_matcher_options,omitzero" yaml:"compress_matcher_options,omitzero"`

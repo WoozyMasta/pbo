@@ -68,6 +68,23 @@ type rewriteArchiveResult struct {
 	dataStart     int64  // payload start offset in the written file
 }
 
+// computeHash1ForFile returns hash1 over PBO content.
+// When sealing is active the on-disk bytes differ from what was written,
+// so the full file is re-read.
+// Otherwise the fixed sections are taken from memory
+// and only the payload region is read from ra, avoiding re-reading header and index.
+func computeHash1ForFile(
+	details *rewriteArchiveResult,
+	ra io.ReaderAt, fileEnd int64,
+	sealedKey *SealedKey,
+) ([]byte, error) {
+	if parseSealedKey(sealedKey).enabled {
+		return computeSignHash1(ra, fileEnd, false)
+	}
+
+	return computeHash1FromSections(details.headerSection, details.indexBuf, ra, details.dataStart, fileEnd)
+}
+
 // encodeHeaderSection re-encodes the header and KV pair bytes from memory.
 // This avoids re-reading the file to hash the header section when computing hash1.
 func encodeHeaderSection(header []byte, headers []HeaderPair) []byte {
@@ -135,7 +152,7 @@ func PackFile(ctx context.Context, outPath string, inputs []Input, opts PackOpti
 		return nil, fmt.Errorf("seek end for trailer: %w", err)
 	}
 
-	hash1, err := computeHash1FromSections(details.headerSection, details.indexBuf, f, details.dataStart, fileEnd)
+	hash1, err := computeHash1ForFile(details, f, fileEnd, opts.SealedKey)
 	if err != nil {
 		return nil, fmt.Errorf("compute SHA1 trailer: %w", err)
 	}
@@ -205,7 +222,7 @@ func PackAndHash(
 		return nil, hs, fmt.Errorf("seek end for hash: %w", err)
 	}
 
-	hash1, err := computeHash1FromSections(details.headerSection, details.indexBuf, ra, details.dataStart, fileEnd)
+	hash1, err := computeHash1ForFile(details, ra, fileEnd, opts.SealedKey)
 	if err != nil {
 		return nil, hs, fmt.Errorf("hash1: %w", err)
 	}
@@ -276,7 +293,7 @@ func PackAndHashFile(
 		return nil, hs, fmt.Errorf("seek end for hash: %w", err)
 	}
 
-	hash1, err := computeHash1FromSections(details.headerSection, details.indexBuf, f, details.dataStart, fileEnd)
+	hash1, err := computeHash1ForFile(details, f, fileEnd, opts.SealedKey)
 	if err != nil {
 		return nil, hs, fmt.Errorf("hash1: %w", err)
 	}
