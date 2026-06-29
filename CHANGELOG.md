@@ -17,6 +17,14 @@ and this project adheres to [Semantic Versioning][].
 
 ### Added
 
+* `EntriesView` returns the internal entry slice without copying;
+  zero-alloc alternative to `Entries()` for read-only listing and polling.
+* `RangeEntries` iterates entries with early-exit support, also zero-alloc.
+* `OpenPackedEntryInfo` and `CopyPackedEntryInfoTo` expose raw
+  (compressed, as-stored) entry bytes without decompression,
+  for selective replace and hash/debug tooling.
+* `LargeWriteBuffer` constant (16 MiB) as explicit opt-in
+  for bulk sequential packing workloads.
 * `CopyEntryTo` and `CopyEntryInfoTo` -
   push-model entry read API that decompresses directly into an `io.Writer`
   without spawning a goroutine or pipe.
@@ -29,6 +37,8 @@ and this project adheres to [Semantic Versioning][].
 * Pack index is now written as a single pre-built block via `WriteAt`
   (or `Seek`+`Write` fallback) instead of N separate seek+patch calls per entry.
   Reduces system call count from 2N to 1 for large archives.
+* `Editor.Commit` no longer reopens the output file to append the SHA1 trailer;
+  it is written inline via `WriteAt`, matching `PackFile` behavior.
 * `PackFile` and `PackAndHashFile` no longer close
   and reopen the output file to append the SHA1 trailer;
   it is written inline via `WriteAt`.
@@ -43,6 +53,9 @@ and this project adheres to [Semantic Versioning][].
   to avoid allocations for already-lowercase paths.
 * `estimateEntryCapacity` cap raised from 8192 to 65536
   to avoid multiple slice growths when reading large-index PBOs.
+* `DefaultWriteBuffer` reduced from 16 MiB to 4 MiB
+  to lower pool memory pressure for long-lived daemons;
+  use `LargeWriteBuffer` to restore the previous behavior.
 * Extraction no longer spawns a goroutine and pipe per compressed entry;
   decompression writes directly into the destination file
   using the worker's existing copy buffer.
