@@ -192,6 +192,44 @@ func (r *Reader) CopyEntryInfoTo(info EntryInfo, dst io.Writer, buf []byte) (int
 	return r.copyEntryPayloadTo(&info, dst, buf)
 }
 
+// OpenPackedEntryInfo opens a read stream over the raw stored bytes of an entry.
+// The returned reader yields compressed bytes for LZSS-compressed entries no decompression is applied.
+// Use this for selective replace in Editor, hash tooling,
+// or any consumer that needs the packed payload verbatim.
+func (r *Reader) OpenPackedEntryInfo(info EntryInfo) (io.ReadCloser, error) {
+	if r == nil || r.ra == nil {
+		return nil, ErrNilReader
+	}
+
+	r.mu.Lock()
+	closed := r.closed
+	r.mu.Unlock()
+	if closed {
+		return nil, ErrClosed
+	}
+
+	sr := io.NewSectionReader(r.ra, int64(info.Offset), int64(info.DataSize))
+	return nopCloser{Reader: sr}, nil
+}
+
+// CopyPackedEntryInfoTo copies the raw stored bytes of an entry into dst.
+// Like OpenPackedEntryInfo, it yields compressed bytes for compressed entries.
+func (r *Reader) CopyPackedEntryInfoTo(info EntryInfo, dst io.Writer) (int64, error) {
+	if r == nil || r.ra == nil {
+		return 0, ErrNilReader
+	}
+
+	r.mu.Lock()
+	closed := r.closed
+	r.mu.Unlock()
+	if closed {
+		return 0, ErrClosed
+	}
+
+	sr := io.NewSectionReader(r.ra, int64(info.Offset), int64(info.DataSize))
+	return io.Copy(dst, sr)
+}
+
 // checkedUint32ToInt converts uint32 to int with platform-safe overflow check.
 func checkedUint32ToInt(v uint32) (int, error) {
 	if uint64(v) > uint64(math.MaxInt) {
