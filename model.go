@@ -25,7 +25,8 @@ const (
 
 // Default packer tuning values.
 const (
-	DefaultWriteBuffer     = 16 * 1024 * 1024
+	DefaultWriteBuffer     = 4 * 1024 * 1024
+	LargeWriteBuffer       = 16 * 1024 * 1024
 	DefaultMinCompressSize = 512
 	DefaultMaxCompressSize = 16 * 1024 * 1024
 )

@@ -529,3 +529,33 @@ func TestPack_TelemetryAndOnEntryDone(t *testing.T) {
 		t.Fatalf("compressed callbacks=%d, want 1", compressedCount)
 	}
 }
+
+func TestLargeWriteBufferRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	payload := bytes.Repeat([]byte("x"), 1024)
+	inputs := []Input{{
+		Path:     "a/b.txt",
+		Open:     func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(payload)), nil },
+		SizeHint: int64(len(payload)),
+	}}
+
+	out := filepath.Join(t.TempDir(), "out.pbo")
+	if _, err := PackFile(context.Background(), out, inputs, PackOptions{WriterBufferSize: LargeWriteBuffer}); err != nil {
+		t.Fatalf("pack: %v", err)
+	}
+
+	r, err := OpenWithOptions(out, ReaderOptions{})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer func() { _ = r.Close() }()
+
+	got, err := r.ReadEntry("a/b.txt")
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if !bytes.Equal(got, payload) {
+		t.Fatalf("content mismatch: got %d bytes", len(got))
+	}
+}
