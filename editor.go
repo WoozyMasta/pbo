@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strings"
@@ -221,27 +222,43 @@ func (e *Editor) commitFromBackup(ctx context.Context, backupPath string) (*Pack
 	if err != nil {
 		return nil, fmt.Errorf("create destination archive: %w", err)
 	}
+	defer func() {
+		if dstFile != nil {
+			_ = dstFile.Close()
+		}
+	}()
 
-	res, writeErr := rewriteArchive(ctx, dstFile, srcReader.ra, plan, packOpts)
-	if writeErr != nil {
-		_ = dstFile.Close()
-		return nil, writeErr
+	details, err := rewriteArchiveDetailed(ctx, dstFile, srcReader.ra, plan, packOpts)
+	if err != nil {
+		return nil, err
+	}
+
+	fileEnd, err := dstFile.Seek(0, io.SeekEnd)
+	if err != nil {
+		return nil, fmt.Errorf("seek end for trailer: %w", err)
+	}
+
+	hash1, err := computeHash1ForFile(details, dstFile, fileEnd, packOpts.SealedKey)
+	if err != nil {
+		return nil, fmt.Errorf("compute SHA1 trailer: %w", err)
+	}
+
+	var trailer [21]byte
+	copy(trailer[1:], hash1)
+	if _, err := dstFile.WriteAt(trailer[:], fileEnd); err != nil {
+		return nil, fmt.Errorf("write SHA1 trailer: %w", err)
 	}
 
 	if err := dstFile.Sync(); err != nil {
-		_ = dstFile.Close()
 		return nil, fmt.Errorf("sync destination archive: %w", err)
 	}
 
 	if err := dstFile.Close(); err != nil {
 		return nil, fmt.Errorf("close destination archive: %w", err)
 	}
+	dstFile = nil
 
-	if err := writeSHA1Trailer(e.path); err != nil {
-		return nil, fmt.Errorf("write SHA1 trailer: %w", err)
-	}
-
-	return res, nil
+	return details.packResult, nil
 }
 
 // normalizeEditorInputs validates and canonicalizes editor input list.

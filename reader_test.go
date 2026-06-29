@@ -967,36 +967,6 @@ func TestPack_WritesZeroEntryOffsets(t *testing.T) {
 	}
 }
 
-func TestWriteSHA1Trailer_DoesNotOverwriteWhenTailLooksLikeTrailer(t *testing.T) {
-	t.Parallel()
-
-	path := filepath.Join(t.TempDir(), "trailer-candidate.bin")
-	payload := bytes.Repeat([]byte{0xAB}, 64)
-	payload[43] = 0x00 // Makes payload[size-21] look like trailer prefix candidate.
-	original := append([]byte(nil), payload...)
-
-	if err := os.WriteFile(path, payload, 0o600); err != nil {
-		t.Fatalf("write payload: %v", err)
-	}
-
-	if err := writeSHA1Trailer(path); err != nil {
-		t.Fatalf("writeSHA1Trailer: %v", err)
-	}
-
-	withTrailer, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read with trailer: %v", err)
-	}
-
-	if len(withTrailer) != len(original)+21 {
-		t.Fatalf("len(withTrailer)=%d, want %d", len(withTrailer), len(original)+21)
-	}
-
-	if !bytes.Equal(withTrailer[:len(original)], original) {
-		t.Fatalf("payload prefix changed when writing trailer")
-	}
-}
-
 func createMinimalPBO(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()

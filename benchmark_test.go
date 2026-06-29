@@ -442,6 +442,7 @@ func BenchmarkEditDelete(b *testing.B) {
 
 // createBenchPBO builds a deterministic benchmark archive with fixed-size text entries.
 func createBenchPBO(b *testing.B, numEntries int) string {
+	b.Helper()
 	dir := b.TempDir()
 	out := filepath.Join(dir, "bench.pbo")
 	inputs := make([]Input, numEntries)
@@ -454,17 +455,10 @@ func createBenchPBO(b *testing.B, numEntries int) string {
 		}
 	}
 
-	f, err := os.Create(out)
-	if err != nil {
+	if _, err := PackFile(context.Background(), out, inputs, PackOptions{}); err != nil {
 		b.Fatal(err)
 	}
-	_, err = Pack(context.Background(), f, inputs, PackOptions{})
-	if err != nil {
-		_ = f.Close()
-		b.Fatal(err)
-	}
-	_ = writeSHA1Trailer(out)
-	_ = f.Close()
+
 	return out
 }
 
@@ -482,17 +476,10 @@ func createBenchLargeIndexPBO(b *testing.B, numEntries int) string {
 			SizeHint: 96,
 		}
 	}
-	f, err := os.Create(out)
-	if err != nil {
+	if _, err := PackFile(context.Background(), out, inputs, PackOptions{}); err != nil {
 		b.Fatal(err)
 	}
-	_, err = Pack(context.Background(), f, inputs, PackOptions{})
-	if err != nil {
-		_ = f.Close()
-		b.Fatal(err)
-	}
-	_ = writeSHA1Trailer(out)
-	_ = f.Close()
+
 	return out
 }
 
