@@ -133,6 +133,31 @@ func (r *Reader) Entries() []EntryInfo {
 	return entries
 }
 
+// EntriesView returns the internal entry slice without copying.
+// Callers must not modify the returned slice or its elements.
+// Suitable for read-only listing and UI polling where avoiding the copy matters.
+func (r *Reader) EntriesView() []EntryInfo {
+	if r == nil {
+		return nil
+	}
+
+	return r.entries
+}
+
+// RangeEntries calls fn for each entry in index order.
+// Iteration stops early when fn returns false.
+func (r *Reader) RangeEntries(fn func(EntryInfo) bool) {
+	if r == nil {
+		return
+	}
+
+	for _, e := range r.entries {
+		if !fn(e) {
+			return
+		}
+	}
+}
+
 // Headers returns parsed headers in original order.
 func (r *Reader) Headers() []HeaderPair {
 	if r == nil {
