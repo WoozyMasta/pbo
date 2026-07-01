@@ -133,13 +133,23 @@ func streamDecompressEntry(name string, dst *io.PipeWriter, src io.Reader, outLe
 	_ = dst.Close()
 }
 
+// readerOnly hides optional interfaces (WriterTo) from an io.Reader.
+// io.SectionReader implements WriterTo since Go 1.22;
+// without this wrapper io.CopyBuffer ignores the caller-supplied buffer and allocates 32 KiB per call.
+type readerOnly struct{ io.Reader }
+
+// writerOnly hides optional interfaces (ReaderFrom) from an io.Writer.
+// *os.File implements ReaderFrom on Windows;
+// without this wrapper io.CopyBuffer ignores the caller-supplied buffer and allocates 32 KiB per call.
+type writerOnly struct{ io.Writer }
+
 // copyEntryPayloadTo copies one entry payload (decompressing if needed) directly into dst
 // without spawning a goroutine or pipe. buf is used for uncompressed copies; nil is safe.
 // For compressed entries the lzss package manages its own internal buffer.
 func (r *Reader) copyEntryPayloadTo(info *EntryInfo, dst io.Writer, buf []byte) (int64, error) {
 	sr := io.NewSectionReader(r.ra, int64(info.Offset), int64(info.DataSize))
 	if !info.IsCompressed() {
-		return io.CopyBuffer(dst, sr, buf)
+		return io.CopyBuffer(writerOnly{dst}, readerOnly{sr}, buf)
 	}
 
 	outLen, err := checkedUint32ToInt(info.OriginalSize)
