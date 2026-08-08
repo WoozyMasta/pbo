@@ -436,6 +436,62 @@ func TestPack_KnownSizeOverMaxCompressSizeStaysRaw(t *testing.T) {
 	}
 }
 
+// TestCompressCandidate_FalseLowSizeHintReadsBeyondMemoryLimit captures the pre-fix read behavior safely.
+func TestCompressCandidate_FalseLowSizeHintReadsBeyondMemoryLimit(t *testing.T) {
+	const (
+		maxCompressSize = int64(1024)
+		readLimit       = int64(64 * 1024)
+	)
+	src := &countingLimitReader{limit: readLimit}
+	opts := PackOptions{
+		MinCompressSize: 1,
+		MaxCompressSize: uint32(maxCompressSize),
+	}
+	opts.applyDefaults()
+
+	_, err := writeCompressedCandidatePayloadInMemory(
+		io.Discard,
+		src,
+		Input{Path: "false-low.txt", SizeHint: 1},
+		opts,
+		0,
+		make([]byte, 32*1024),
+		1<<30,
+	)
+	if err == nil {
+		t.Fatal("expected synthetic reader limit error")
+	}
+	if src.read != readLimit {
+		t.Fatalf("read %d bytes, want controlled limit %d", src.read, readLimit)
+	}
+	if src.read <= maxCompressSize {
+		t.Fatalf("read %d bytes, want evidence of reading beyond MaxCompressSize %d", src.read, maxCompressSize)
+	}
+}
+
+// countingLimitReader supplies bytes up to a fixed limit, then returns an error.
+type countingLimitReader struct {
+	read  int64 // Total bytes supplied to the candidate reader.
+	limit int64 // Maximum bytes supplied before the synthetic error.
+}
+
+// Read counts supplied bytes without allocating a payload-sized fixture.
+func (r *countingLimitReader) Read(p []byte) (int, error) {
+	if r.read >= r.limit {
+		return 0, errors.New("synthetic reader limit reached")
+	}
+
+	n := len(p)
+	if remaining := r.limit - r.read; int64(n) > remaining {
+		n = int(remaining)
+	}
+
+	clear(p[:n])
+	r.read += int64(n)
+
+	return n, nil
+}
+
 func TestPack_TelemetryAndOnEntryDone(t *testing.T) {
 	t.Parallel()
 

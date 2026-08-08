@@ -56,6 +56,24 @@ func BenchmarkOpenParseLargeIndex(b *testing.B) {
 	}
 }
 
+// BenchmarkOpenParseLargePayloadFewEntries measures opening a sparse 32 MiB archive with one entry.
+func BenchmarkOpenParseLargePayloadFewEntries(b *testing.B) {
+	path := createBenchLargePayloadPBO(b, 32<<20)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		r, err := Open(path)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if len(r.Entries()) != 1 {
+			b.Fatalf("len(entries)=%d, want 1", len(r.Entries()))
+		}
+		_ = r.Close()
+	}
+}
+
 func BenchmarkExtract(b *testing.B) {
 	benchmarkExtractWithSanitize(b, false)
 }
@@ -438,6 +456,192 @@ func BenchmarkEditDelete(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
+}
+
+// BenchmarkEditorDeleteDirLargeIndexMultiplePrefixes measures directory deletion over a large index.
+func BenchmarkEditorDeleteDirLargeIndexMultiplePrefixes(b *testing.B) {
+	state := makeBenchDeleteDirState(benchLargeIndexEntries)
+	prefixes := []string{"grp_010", "grp_050", "grp_100", "grp_150"}
+	removed := make(map[string]rewriteEntry)
+	for key, item := range state {
+		if hasAnyEditorDirPrefix(item.path, prefixes) {
+			removed[key] = item
+		}
+	}
+	if len(removed) == 0 {
+		b.Fatal("empty delete fixture")
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		applyEditDeleteDir(state, prefixes)
+		for key, item := range removed {
+			state[key] = item
+		}
+	}
+	b.StopTimer()
+	b.ReportMetric(float64(len(state)), "entries")
+	b.ReportMetric(float64(len(prefixes)), "prefixes")
+}
+
+// BenchmarkReadEntryRawMemory measures a full-memory read of an uncompressed entry.
+func BenchmarkReadEntryRawMemory(b *testing.B) {
+	benchmarkReadEntryMemory(b, false)
+}
+
+// BenchmarkReadEntryCompressedMemory measures a full-memory read of a compressed entry.
+func BenchmarkReadEntryCompressedMemory(b *testing.B) {
+	benchmarkReadEntryMemory(b, true)
+}
+
+// BenchmarkSealedTransform64MiBCountingIO reports exact I/O calls for a 64 MiB transform.
+func BenchmarkSealedTransform64MiBCountingIO(b *testing.B) {
+	data := createBenchSealedPayload(b, 64<<20)
+	key := sealedTestKey()
+	var readCalls, writeCalls int64
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		ra := &countingReaderAt{ReaderAt: bytes.NewReader(data)}
+		wa := &countingWriterAt{data: data}
+		if err := applySealedTransformToReadWriteAt(ra, wa, int64(len(data)), &key, false); err != nil {
+			b.Fatal(err)
+		}
+		readCalls = ra.calls
+		writeCalls = wa.calls
+	}
+	b.StopTimer()
+	b.ReportMetric(float64(readCalls), "readat/op")
+	b.ReportMetric(float64(writeCalls), "writeat/op")
+}
+
+// benchmarkReadEntryMemory measures full-memory reads after fixture setup.
+func benchmarkReadEntryMemory(b *testing.B, compressed bool) {
+	const entryPath = "bench/read-entry.txt"
+	payload := bytes.Repeat([]byte("read-entry-benchmark-data-"), 4096)
+	path := createBenchReadEntryPBO(b, entryPath, payload, compressed)
+	r, err := Open(path)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer func() { _ = r.Close() }()
+
+	b.ReportAllocs()
+	b.SetBytes(int64(len(payload)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		data, err := r.ReadEntry(entryPath)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if len(data) != len(payload) {
+			b.Fatalf("ReadEntry returned %d bytes, want %d", len(data), len(payload))
+		}
+	}
+}
+
+// makeBenchDeleteDirState builds editor state outside the timed loop.
+func makeBenchDeleteDirState(numEntries int) map[string]rewriteEntry {
+	state := make(map[string]rewriteEntry, numEntries)
+	for i := 0; i < numEntries; i++ {
+		path := benchmarkLargePath(i)
+		item := rewriteEntry{path: path}
+		state[editorPathKey(path)] = item
+	}
+
+	return state
+}
+
+// hasAnyEditorDirPrefix reports whether a path matches one of the benchmark prefixes.
+func hasAnyEditorDirPrefix(path string, prefixes []string) bool {
+	for _, prefix := range prefixes {
+		if hasEditorDirPrefix(path, prefix) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// createBenchLargePayloadPBO creates a sparse large archive with one indexed entry.
+func createBenchLargePayloadPBO(b *testing.B, size int64) string {
+	b.Helper()
+	path := createBenchPBO(b, 1)
+	file, err := os.OpenFile(path, os.O_RDWR, 0)
+	if err != nil {
+		b.Fatal(err)
+	}
+	if err := file.Truncate(size); err != nil {
+		_ = file.Close()
+		b.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		b.Fatal(err)
+	}
+
+	return path
+}
+
+// createBenchReadEntryPBO creates one raw or compressed entry outside timing.
+func createBenchReadEntryPBO(b *testing.B, entryPath string, payload []byte, compressed bool) string {
+	b.Helper()
+	out := filepath.Join(b.TempDir(), "read-entry.pbo")
+	input := Input{
+		Path:     entryPath,
+		Open:     benchOpenBytes(payload),
+		SizeHint: int64(len(payload)),
+	}
+	opts := PackOptions{}
+	if compressed {
+		opts.Compress = includeRules("*.txt")
+	}
+	if _, err := PackFile(context.Background(), out, []Input{input}, opts); err != nil {
+		b.Fatal(err)
+	}
+
+	return out
+}
+
+// createBenchSealedPayload creates a valid archive padded to the requested transform size.
+func createBenchSealedPayload(b *testing.B, size int) []byte {
+	b.Helper()
+	path := createBenchLargePayloadPBO(b, int64(size))
+	data, err := os.ReadFile(path)
+	if err != nil {
+		b.Fatal(err)
+	}
+	return data
+}
+
+// countingReaderAt records exact ReaderAt calls for structural benchmarks.
+type countingReaderAt struct {
+	io.ReaderAt       // Source archive reader.
+	calls       int64 // Number of delegated ReadAt calls.
+}
+
+// ReadAt delegates the read and increments the call counter.
+func (r *countingReaderAt) ReadAt(p []byte, off int64) (int, error) {
+	r.calls++
+	return r.ReaderAt.ReadAt(p, off)
+}
+
+// countingWriterAt records exact WriteAt calls and updates the benchmark buffer.
+type countingWriterAt struct {
+	data  []byte // Mutable archive bytes used by the in-place transform.
+	calls int64  // Number of delegated WriteAt calls.
+}
+
+// WriteAt copies bytes into the buffer and increments the call counter.
+func (w *countingWriterAt) WriteAt(p []byte, off int64) (int, error) {
+	w.calls++
+	if off < 0 || off+int64(len(p)) > int64(len(w.data)) {
+		return 0, io.ErrShortWrite
+	}
+
+	copy(w.data[int(off):], p)
+	return len(p), nil
 }
 
 // createBenchPBO builds a deterministic benchmark archive with fixed-size text entries.
