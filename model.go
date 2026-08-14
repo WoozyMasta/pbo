@@ -195,6 +195,8 @@ type ReaderOptions struct {
 	OffsetMode OffsetMode `json:"offset_mode,omitempty" yaml:"offset_mode,omitempty"`
 	// EntryPathPrefix keeps entries whose normalized path is equal to prefix or starts with "prefix/".
 	EntryPathPrefix string `json:"entry_path_prefix,omitempty" yaml:"entry_path_prefix,omitempty"`
+	// Limits bounds parser memory and metadata growth; zero fields use documented defaults.
+	Limits ReaderLimits `json:"limits,omitzero" yaml:"limits,omitempty"`
 	// MinEntryOriginalSize keeps entries with original size >= this value.
 	// For uncompressed entries OriginalSize is treated as DataSize.
 	MinEntryOriginalSize uint32 `json:"min_entry_original_size,omitempty" yaml:"min_entry_original_size,omitempty"`
@@ -208,6 +210,23 @@ type ReaderOptions struct {
 	SanitizeControlChars bool `json:"sanitize_control_chars,omitempty" yaml:"sanitize_control_chars,omitempty"`
 	// SanitizeNames rewrites entry paths to filesystem-safe names for listing workflows.
 	SanitizeNames bool `json:"sanitize_names,omitempty" yaml:"sanitize_names,omitempty"`
+}
+
+// ReaderLimits sets defensive parser limits. Zero or negative fields use defaults:
+// 16 MiB per header section, 1 MiB per header field, 512 bytes per entry name,
+// 65,536 header properties, and 1,048,576 entries.
+// Callers handling unusual archives may raise these values.
+type ReaderLimits struct {
+	// MaxHeaderSectionBytes limits all property key/value bytes, including NUL terminators.
+	MaxHeaderSectionBytes int64 `json:"max_header_section_bytes,omitempty" yaml:"max_header_section_bytes,omitempty"`
+	// MaxHeaderFieldBytes limits an individual property key or value, excluding its NUL terminator.
+	MaxHeaderFieldBytes int `json:"max_header_field_bytes,omitempty" yaml:"max_header_field_bytes,omitempty"`
+	// MaxEntryNameBytes limits an entry path, excluding its NUL terminator; default is maxNameLen.
+	MaxEntryNameBytes int `json:"max_entry_name_bytes,omitempty" yaml:"max_entry_name_bytes,omitempty"`
+	// MaxHeaderProperties limits the number of named header properties.
+	MaxHeaderProperties int `json:"max_header_properties,omitempty" yaml:"max_header_properties,omitempty"`
+	// MaxEntries limits the number of index records.
+	MaxEntries int `json:"max_entries,omitempty" yaml:"max_entries,omitempty"`
 }
 
 // ExtractOptions configures Extract behavior.
@@ -273,6 +292,26 @@ func (opts *PackOptions) applyDefaults() {
 func (opts *ReaderOptions) applyDefaults() {
 	if opts.OffsetMode == "" {
 		opts.OffsetMode = OffsetModeSequential
+	}
+	opts.Limits.applyDefaults()
+}
+
+// applyDefaults fills zero or negative parser limits with defensive defaults.
+func (limits *ReaderLimits) applyDefaults() {
+	if limits.MaxHeaderSectionBytes <= 0 {
+		limits.MaxHeaderSectionBytes = defaultMaxHeaderSectionBytes
+	}
+	if limits.MaxHeaderFieldBytes <= 0 {
+		limits.MaxHeaderFieldBytes = defaultMaxHeaderFieldBytes
+	}
+	if limits.MaxEntryNameBytes <= 0 {
+		limits.MaxEntryNameBytes = maxNameLen
+	}
+	if limits.MaxHeaderProperties <= 0 {
+		limits.MaxHeaderProperties = defaultMaxHeaderProperties
+	}
+	if limits.MaxEntries <= 0 {
+		limits.MaxEntries = defaultMaxEntries
 	}
 }
 

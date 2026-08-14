@@ -169,6 +169,11 @@ if err := r.Extract(ctx, "out", pbo.ExtractOptions{MaxWorkers: 4}); err != nil {
 }
 ```
 
+`ReaderOptions.Limits` bounds parser metadata.
+Defaults are 16 MiB per header section, 1 MiB per property field,
+512 bytes per entry path, 65,536 header properties, and 1,048,576 entries.
+Raise individual limits for unusual archives.
+
 ### Edit existing PBO
 
 Use `OpenEditor` for transactional changes to an existing archive.

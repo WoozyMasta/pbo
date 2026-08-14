@@ -1,6 +1,7 @@
 package pbo
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/binary"
@@ -26,6 +27,205 @@ func TestOpen_InvalidHeader(t *testing.T) {
 	if !errors.Is(err, ErrInvalidHeader) {
 		t.Errorf("expected ErrInvalidHeader, got %v", err)
 	}
+}
+
+func TestReaderLimits_EntryNameLength(t *testing.T) {
+	name := bytes.Repeat([]byte("n"), maxNameLen+1)
+	raw := makeReaderLimitFixture(nil, [][]byte{name})
+
+	_, err := NewReaderFromReaderAt(bytes.NewReader(raw), int64(len(raw)))
+	if !errors.Is(err, ErrFileNameTooLong) {
+		t.Fatalf("expected ErrFileNameTooLong for default limit, got %v", err)
+	}
+
+	r, err := NewReaderFromReaderAtWithOptions(bytes.NewReader(raw), int64(len(raw)), ReaderOptions{
+		Limits: ReaderLimits{MaxEntryNameBytes: len(name)},
+	})
+	if err != nil {
+		t.Fatalf("open with raised name limit: %v", err)
+	}
+	defer func() { _ = r.Close() }()
+	if got := r.EntriesView()[0].Path; len(got) != len(name) {
+		t.Fatalf("entry name length=%d, want %d", len(got), len(name))
+	}
+}
+
+func TestReaderLimits_LargeUnterminatedEntryNameStopsEarly(t *testing.T) {
+	const sourceSize = int64(8 << 20)
+	header := make([]byte, headerSize+1)
+	binary.LittleEndian.PutUint32(header[1:5], uint32(MimeHeader))
+	ra := &syntheticReaderAt{prefix: header, size: sourceSize, fill: 'n'}
+
+	_, err := NewReaderFromReaderAt(ra, sourceSize)
+	if !errors.Is(err, ErrFileNameTooLong) {
+		t.Fatalf("expected ErrFileNameTooLong, got %v", err)
+	}
+	if read := ra.maxReadEnd - int64(len(header)); read > readerEntryBufferSize {
+		t.Fatalf("scanner read %d bytes for an overlong name, buffer limit is %d", read, readerEntryBufferSize)
+	}
+
+	spillReader := &syntheticReaderAt{prefix: header, size: sourceSize, fill: 'n'}
+	index := io.NewSectionReader(spillReader, int64(len(header)), sourceSize-int64(len(header)))
+	buffered := bufio.NewReaderSize(index, readerEntryBufferSize)
+	var spill []byte
+	_, _, err = readNullTerminatedBuffered(buffered, &spill, maxNameLen)
+	if !errors.Is(err, ErrFileNameTooLong) {
+		t.Fatalf("buffered scanner expected ErrFileNameTooLong, got %v", err)
+	}
+	if len(spill) > maxNameLen || cap(spill) > maxNameLen {
+		t.Fatalf("spill length/capacity = %d/%d, limit is %d", len(spill), cap(spill), maxNameLen)
+	}
+}
+
+func TestReaderLimits_HeaderFieldsRespectDeclaredSize(t *testing.T) {
+	tests := []struct {
+		name         string
+		headerTail   []byte
+		declaredSize int
+	}{
+		{
+			name:         "unterminated key",
+			headerTail:   []byte("key\x00\x00"),
+			declaredSize: len("key"),
+		},
+		{
+			name:         "unterminated value",
+			headerTail:   []byte("key\x00value\x00\x00"),
+			declaredSize: len("key\x00value"),
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			header := make([]byte, headerSize)
+			binary.LittleEndian.PutUint32(header[1:5], uint32(MimeHeader))
+			raw := append(header, test.headerTail...)
+			declaredSize := int64(headerSize + test.declaredSize)
+			ra := &syntheticReaderAt{prefix: raw, size: int64(len(raw))}
+
+			_, err := NewReaderFromReaderAt(ra, declaredSize)
+			if err == nil {
+				t.Fatal("expected truncated header field error")
+			}
+			if ra.maxReadEnd > declaredSize {
+				t.Fatalf("reader accessed byte %d beyond declared size %d", ra.maxReadEnd, declaredSize)
+			}
+		})
+	}
+}
+
+func TestReaderLimits_HeaderAndEntryCount(t *testing.T) {
+	entries := [][]byte{[]byte("a.txt"), []byte("b.txt")}
+	raw := makeReaderLimitFixture([]HeaderPair{
+		{Key: "key", Value: "value"},
+		{Key: "other", Value: "value"},
+	}, entries)
+
+	_, err := NewReaderFromReaderAtWithOptions(bytes.NewReader(raw), int64(len(raw)), ReaderOptions{
+		Limits: ReaderLimits{MaxEntries: 1},
+	})
+	if !errors.Is(err, ErrReaderLimitExceeded) {
+		t.Fatalf("expected ErrReaderLimitExceeded for entry count, got %v", err)
+	}
+	_, err = ListEntriesFromReaderAtWithOptions(bytes.NewReader(raw), int64(len(raw)), ReaderOptions{
+		Limits: ReaderLimits{MaxEntries: 1},
+	})
+	if !errors.Is(err, ErrReaderLimitExceeded) {
+		t.Fatalf("list API expected ErrReaderLimitExceeded for entry count, got %v", err)
+	}
+
+	_, err = NewReaderFromReaderAtWithOptions(bytes.NewReader(raw), int64(len(raw)), ReaderOptions{
+		Limits: ReaderLimits{MaxHeaderFieldBytes: 2},
+	})
+	if !errors.Is(err, ErrReaderLimitExceeded) {
+		t.Fatalf("expected ErrReaderLimitExceeded for header field, got %v", err)
+	}
+
+	_, err = NewReaderFromReaderAtWithOptions(bytes.NewReader(raw), int64(len(raw)), ReaderOptions{
+		Limits: ReaderLimits{MaxHeaderProperties: 1},
+	})
+	if !errors.Is(err, ErrReaderLimitExceeded) {
+		t.Fatalf("expected ErrReaderLimitExceeded for header property count, got %v", err)
+	}
+
+	_, err = NewReaderFromReaderAtWithOptions(bytes.NewReader(raw), int64(len(raw)), ReaderOptions{
+		Limits: ReaderLimits{MaxHeaderSectionBytes: 1},
+	})
+	if !errors.Is(err, ErrReaderLimitExceeded) {
+		t.Fatalf("expected ErrReaderLimitExceeded for header section, got %v", err)
+	}
+}
+
+func TestReader_PreservesRawControlAndInvalidUTF8EntryName(t *testing.T) {
+	name := []byte{0xff, 0x01, 'x'}
+	raw := makeReaderLimitFixture(nil, [][]byte{name})
+	r, err := NewReaderFromReaderAt(bytes.NewReader(raw), int64(len(raw)))
+	if err != nil {
+		t.Fatalf("open raw-name fixture: %v", err)
+	}
+	defer func() { _ = r.Close() }()
+	if got := []byte(r.EntriesView()[0].Path); !bytes.Equal(got, name) {
+		t.Fatalf("raw name changed: got %v, want %v", got, name)
+	}
+}
+
+// makeReaderLimitFixture encodes a small raw PBO index for parser limit tests.
+func makeReaderLimitFixture(headers []HeaderPair, entryNames [][]byte) []byte {
+	data := make([]byte, headerSize)
+	binary.LittleEndian.PutUint32(data[1:5], uint32(MimeHeader))
+	for _, pair := range headers {
+		data = append(data, pair.Key...)
+		data = append(data, 0)
+		data = append(data, pair.Value...)
+		data = append(data, 0)
+	}
+	data = append(data, 0)
+	for _, name := range entryNames {
+		data = append(data, name...)
+		data = append(data, 0)
+		data = append(data, make([]byte, 20)...)
+	}
+	data = append(data, 0)
+	data = append(data, make([]byte, 20)...)
+
+	return data
+}
+
+// syntheticReaderAt generates a fixed prefix and repeated fill bytes without a large fixture allocation.
+type syntheticReaderAt struct {
+	prefix     []byte // Fixed bytes at the beginning of the source.
+	size       int64  // Reported source size.
+	maxReadEnd int64  // Furthest byte returned to the caller.
+	fill       byte   // Repeated byte used after prefix.
+}
+
+// ReadAt generates bytes and records the furthest source position accessed.
+func (r *syntheticReaderAt) ReadAt(p []byte, offset int64) (int, error) {
+	if offset < 0 {
+		return 0, errors.New("negative offset")
+	}
+	if offset >= r.size {
+		return 0, io.EOF
+	}
+	n := len(p)
+	if remaining := r.size - offset; int64(n) > remaining {
+		n = int(remaining)
+	}
+	for i := 0; i < n; i++ {
+		position := offset + int64(i)
+		if position < int64(len(r.prefix)) {
+			p[i] = r.prefix[position]
+		} else {
+			p[i] = r.fill
+		}
+	}
+	if end := offset + int64(n); end > r.maxReadEnd {
+		r.maxReadEnd = end
+	}
+	if n < len(p) {
+		return n, io.EOF
+	}
+
+	return n, nil
 }
 
 func TestOpen_EmptyFile(t *testing.T) {
@@ -918,7 +1118,7 @@ func TestPack_WritesZeroEntryOffsets(t *testing.T) {
 	off := int64(headerSize)
 
 	for {
-		key, n, err := readNullTerminated(f, off)
+		key, n, err := readNullTerminated(f, fi.Size(), off, defaultMaxHeaderFieldBytes, ErrReaderLimitExceeded)
 		if err != nil {
 			t.Fatalf("read header key at %d: %v", off, err)
 		}
@@ -928,7 +1128,7 @@ func TestPack_WritesZeroEntryOffsets(t *testing.T) {
 			break
 		}
 
-		_, n, err = readNullTerminated(f, off)
+		_, n, err = readNullTerminated(f, fi.Size(), off, defaultMaxHeaderFieldBytes, ErrReaderLimitExceeded)
 		if err != nil {
 			t.Fatalf("read header value at %d: %v", off, err)
 		}
@@ -937,7 +1137,7 @@ func TestPack_WritesZeroEntryOffsets(t *testing.T) {
 	}
 
 	for {
-		name, n, err := readNullTerminated(f, off)
+		name, n, err := readNullTerminated(f, fi.Size(), off, maxNameLen, ErrReaderLimitExceeded)
 		if err != nil {
 			t.Fatalf("read entry name at %d: %v", off, err)
 		}

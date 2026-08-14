@@ -60,7 +60,7 @@ type sealedReaderAt struct {
 }
 
 // prepareReaderAtWithSealedOptions wraps source reader with on-demand sealed decode when enabled.
-func prepareReaderAtWithSealedOptions(ra io.ReaderAt, size int64, sealedKeyValue *SealedKey) (io.ReaderAt, error) {
+func prepareReaderAtWithSealedOptions(ra io.ReaderAt, size int64, sealedKeyValue *SealedKey, limits ReaderLimits) (io.ReaderAt, error) {
 	if ra == nil {
 		return nil, ErrNilReader
 	}
@@ -71,7 +71,7 @@ func prepareReaderAtWithSealedOptions(ra io.ReaderAt, size int64, sealedKeyValue
 		return ra, nil
 	}
 
-	layout, err := buildSealedLayout(ra, size, true)
+	layout, err := buildSealedLayoutWithLimits(ra, size, true, limits)
 	if err != nil {
 		return nil, err
 	}
@@ -225,6 +225,11 @@ func parseSealedKey(value *SealedKey) sealedKey {
 
 // buildSealedLayout resolves transform region/seed from archive metadata.
 func buildSealedLayout(ra io.ReaderAt, size int64, detectTrailer bool) (sealedLayout, error) {
+	return buildSealedLayoutWithLimits(ra, size, detectTrailer, ReaderLimits{})
+}
+
+// buildSealedLayoutWithLimits resolves transform geometry using parser limits.
+func buildSealedLayoutWithLimits(ra io.ReaderAt, size int64, detectTrailer bool, limits ReaderLimits) (sealedLayout, error) {
 	var layout sealedLayout
 	if ra == nil {
 		return layout, ErrNilReader
@@ -247,7 +252,7 @@ func buildSealedLayout(ra io.ReaderAt, size int64, detectTrailer bool) (sealedLa
 		return layout, ErrSizeOverflow
 	}
 
-	_, _, tableOffset, err := parseHeaderSection(ra)
+	_, _, tableOffset, err := parseHeaderSection(ra, size, limits)
 	if err != nil {
 		return layout, err
 	}

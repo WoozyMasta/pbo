@@ -14,6 +14,14 @@ and this project adheres to [Semantic Versioning][].
 ### Removed
 -->
 
+## Unreleased
+
+### Changed
+
+* Reader parsing now applies configurable limits
+  to header fields, properties, entry names and index records.
+  Entry metadata preallocation no longer scales with total archive size.
+
 ## [0.3.0][] - 2026-07-01
 
 ### Added
@@ -117,5 +125,6 @@ and this project adheres to [Semantic Versioning][].
 [0.1.0]: https://github.com/WoozyMasta/pbo/v0.1.0
 
 <!--links-->
+[Unreleased]: https://github.com/WoozyMasta/pbo/compare/v0.3.0...HEAD
 [Keep a Changelog]: https://keepachangelog.com/en/1.1.0/
 [Semantic Versioning]: https://semver.org/spec/v2.0.0.html

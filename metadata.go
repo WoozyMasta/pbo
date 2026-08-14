@@ -42,12 +42,12 @@ func ReadHeadersFromReaderAtWithOptions(ra io.ReaderAt, size int64, opts ReaderO
 		return nil, fmt.Errorf("%w: short header", ErrInvalidHeader)
 	}
 
-	readerAt, err := prepareReaderAtWithSealedOptions(ra, size, opts.SealedKey)
+	readerAt, err := prepareReaderAtWithSealedOptions(ra, size, opts.SealedKey, opts.Limits)
 	if err != nil {
 		return nil, err
 	}
 
-	_, headers, _, err := parseHeaderSection(readerAt)
+	_, headers, _, err := parseHeaderSection(readerAt, size, opts.Limits)
 	if err != nil {
 		return nil, err
 	}
@@ -95,45 +95,42 @@ func ListEntriesFromReaderAtWithOptions(ra io.ReaderAt, size int64, opts ReaderO
 		return nil, fmt.Errorf("%w: short header", ErrInvalidHeader)
 	}
 
-	readerAt, err := prepareReaderAtWithSealedOptions(ra, size, opts.SealedKey)
+	readerAt, err := prepareReaderAtWithSealedOptions(ra, size, opts.SealedKey, opts.Limits)
 	if err != nil {
 		return nil, err
 	}
 
-	_, _, tableOffset, err := parseHeaderSection(readerAt)
+	parsed, err := parseRawMetadata(readerAt, size, opts.Limits)
 	if err != nil {
 		return nil, err
 	}
-
-	r := &Reader{}
-	entriesEnd, err := r.parseEntriesBuffered(readerAt, tableOffset, size)
-	if err != nil {
+	if err := resolveEntryOffsets(parsed.entries, parsed.dataStart, size, opts.OffsetMode); err != nil {
 		return nil, err
 	}
 
-	if err := resolveEntryOffsets(r.entries, entriesEnd, size, opts.OffsetMode); err != nil {
-		return nil, err
-	}
 	if opts.EnableJunkFilter {
-		r.entries = filterJunkEntries(r.entries)
+		parsed.entries = filterJunkEntries(parsed.entries)
 	}
-	r.entries = filterEntriesBySize(r.entries, opts.MinEntryOriginalSize, opts.MinEntryDataSize)
+
+	parsed.entries = filterEntriesBySize(parsed.entries, opts.MinEntryOriginalSize, opts.MinEntryDataSize)
 	if opts.FilterASCIIOnly {
-		r.entries = filterEntriesByASCIIOnly(r.entries)
+		parsed.entries = filterEntriesByASCIIOnly(parsed.entries)
 	}
+
 	if opts.SanitizeNames {
-		r.entries = filterEntriesBySanitizedPrefix(r.entries, opts.EntryPathPrefix)
+		parsed.entries = filterEntriesBySanitizedPrefix(parsed.entries, opts.EntryPathPrefix)
 	} else {
-		r.entries = filterEntriesByPrefix(r.entries, opts.EntryPathPrefix)
+		parsed.entries = filterEntriesByPrefix(parsed.entries, opts.EntryPathPrefix)
 	}
+
 	if opts.SanitizeControlChars {
-		r.entries, err = sanitizeEntryInfoControlPaths(r.entries)
+		parsed.entries, err = sanitizeEntryInfoControlPaths(parsed.entries)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	entries := r.entries
+	entries := parsed.entries
 	if opts.SanitizeNames {
 		entries, err = sanitizeEntryInfoPaths(entries)
 		if err != nil {

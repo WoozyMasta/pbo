@@ -52,4 +52,6 @@ var (
 	ErrExtractPathOutsideRoot = errors.New("extract path escapes destination root")
 	// ErrInvalidEntryOffset means one or more entry offsets are malformed for selected reader policy.
 	ErrInvalidEntryOffset = errors.New("invalid entry offset")
+	// ErrReaderLimitExceeded means parser input exceeds a configured resource limit.
+	ErrReaderLimitExceeded = errors.New("reader limit exceeded")
 )

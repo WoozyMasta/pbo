@@ -21,7 +21,17 @@ const (
 	readerScanChunkSize = 256
 	// readerEntryBufferSize is a sequential read buffer for entry table parsing.
 	readerEntryBufferSize = 64 * 1024
+	// readerInitialEntryCapacity avoids payload-sized metadata preallocation.
+	readerInitialEntryCapacity = 128
+	// defaultMaxHeaderFieldBytes bounds one property key or value.
+	defaultMaxHeaderFieldBytes = 1 << 20
+	// defaultMaxHeaderProperties bounds named property count.
+	defaultMaxHeaderProperties = 1 << 16
+	// defaultMaxEntries bounds parsed index metadata growth.
+	defaultMaxEntries = 1 << 20
 )
+
+const defaultMaxHeaderSectionBytes int64 = 16 << 20
 
 var (
 	// entryTableReaderPool reuses buffered readers for sequential table parsing.
@@ -109,7 +119,7 @@ func NewReaderFromReaderAt(ra io.ReaderAt, size int64) (*Reader, error) {
 func NewReaderFromReaderAtWithOptions(ra io.ReaderAt, size int64, opts ReaderOptions) (*Reader, error) {
 	opts.applyDefaults()
 
-	readerAt, err := prepareReaderAtWithSealedOptions(ra, size, opts.SealedKey)
+	readerAt, err := prepareReaderAtWithSealedOptions(ra, size, opts.SealedKey, opts.Limits)
 	if err != nil {
 		return nil, err
 	}
@@ -202,23 +212,19 @@ func (r *Reader) SHA1Trailer() ([20]byte, bool) {
 
 // parse reads and validates PBO structure from ReaderAt.
 func (r *Reader) parse(ra io.ReaderAt, size int64, opts ReaderOptions) error {
-	header, headers, off, err := parseHeaderSection(ra)
+	parsed, err := parseRawMetadata(ra, size, opts.Limits)
 	if err != nil {
 		return err
 	}
-	r.header = header
-	r.headers = headers
 
-	// Parse entry table with sequential buffered reads to reduce ReadAt syscall overhead.
-	entriesEnd, err := r.parseEntriesBuffered(ra, off, size)
-	if err != nil {
-		return err
-	}
-	r.dataStart = entriesEnd
+	r.header = parsed.header
+	r.headers = parsed.headers
+	r.entries = parsed.entries
+	r.dataStart = parsed.dataStart
 
 	// OffsetMode defines how payload offsets are resolved:
 	// sequential from payload start, stored offsets, or strict stored validation.
-	if err := resolveEntryOffsets(r.entries, entriesEnd, size, opts.OffsetMode); err != nil {
+	if err := resolveEntryOffsets(r.entries, r.dataStart, size, opts.OffsetMode); err != nil {
 		return err
 	}
 
@@ -281,10 +287,48 @@ func (r *Reader) parse(ra io.ReaderAt, size int64, opts ReaderOptions) error {
 	return nil
 }
 
-// parseHeaderSection parses fixed header and key-value header pairs and returns entry table offset.
-func parseHeaderSection(ra io.ReaderAt) ([]byte, []headerPair, int64, error) {
+// parseRawMetadata reads lossless header and index data shared by Reader and list APIs.
+func parseRawMetadata(ra io.ReaderAt, size int64, limits ReaderLimits) (*Reader, error) {
+	limits.applyDefaults()
+	if ra == nil {
+		return nil, ErrNilReader
+	}
+
+	header, headers, tableOffset, err := parseHeaderSection(ra, size, limits)
+	if err != nil {
+		return nil, err
+	}
+
+	entryCapacity := min(readerInitialEntryCapacity, limits.MaxEntries)
+	parsed := &Reader{
+		ra:      ra,
+		size:    size,
+		header:  header,
+		headers: headers,
+		entries: make([]EntryInfo, 0, entryCapacity),
+	}
+	dataStart, err := parsed.parseEntriesBuffered(ra, tableOffset, size, limits)
+	if err != nil {
+		return nil, err
+	}
+
+	parsed.dataStart = dataStart
+	return parsed, nil
+}
+
+// parseHeaderSection parses bounded fixed header and key-value pairs.
+func parseHeaderSection(ra io.ReaderAt, size int64, limits ReaderLimits) ([]byte, []headerPair, int64, error) {
+	if ra == nil {
+		return nil, nil, 0, ErrNilReader
+	}
+	if size < headerSize {
+		return nil, nil, 0, fmt.Errorf("%w: short header", ErrInvalidHeader)
+	}
+
+	limits.applyDefaults()
+	boundedRA := io.NewSectionReader(ra, 0, size)
 	header := make([]byte, headerSize)
-	if _, err := ra.ReadAt(header, 0); err != nil {
+	if _, err := boundedRA.ReadAt(header, 0); err != nil {
 		if err == io.EOF {
 			return nil, nil, 0, fmt.Errorf("%w: short header", ErrInvalidHeader)
 		}
@@ -299,8 +343,14 @@ func parseHeaderSection(ra io.ReaderAt) ([]byte, []headerPair, int64, error) {
 
 	headers := make([]headerPair, 0, 4)
 	off := int64(headerSize)
+	headerEnd := size
+	if remaining := size - off; remaining > limits.MaxHeaderSectionBytes {
+		headerEnd = off + limits.MaxHeaderSectionBytes
+	}
+
+	headerRA := io.NewSectionReader(ra, 0, headerEnd)
 	for {
-		key, n, err := readNullTerminated(ra, off)
+		key, n, err := readHeaderField(headerRA, size, headerEnd, off, limits.MaxHeaderFieldBytes)
 		if err != nil {
 			return nil, nil, 0, fmt.Errorf("read header key: %w", err)
 		}
@@ -310,7 +360,11 @@ func parseHeaderSection(ra io.ReaderAt) ([]byte, []headerPair, int64, error) {
 			break
 		}
 
-		value, n, err := readNullTerminated(ra, off)
+		if len(headers) >= limits.MaxHeaderProperties {
+			return nil, nil, 0, fmt.Errorf("%w: more than %d header properties", ErrReaderLimitExceeded, limits.MaxHeaderProperties)
+		}
+
+		value, n, err := readHeaderField(headerRA, size, headerEnd, off, limits.MaxHeaderFieldBytes)
 		if err != nil {
 			return nil, nil, 0, fmt.Errorf("read header value: %w", err)
 		}
@@ -322,8 +376,34 @@ func parseHeaderSection(ra io.ReaderAt) ([]byte, []headerPair, int64, error) {
 	return header, headers, off, nil
 }
 
+// readHeaderField enforces the field and whole-section limits before growing its buffer.
+func readHeaderField(ra io.ReaderAt, sourceSize int64, headerEnd int64, offset int64, maxFieldBytes int) (string, int, error) {
+	if offset >= headerEnd {
+		if headerEnd < sourceSize {
+			return "", 0, fmt.Errorf("%w: header section exceeds %d bytes", ErrReaderLimitExceeded, headerEnd-int64(headerSize))
+		}
+
+		return "", 0, io.EOF
+	}
+
+	remaining := max(headerEnd-offset-1, 0)
+	fieldLimit := maxFieldBytes
+	if remaining < int64(fieldLimit) {
+		fieldLimit = int(remaining)
+	}
+	value, n, err := readNullTerminated(ra, headerEnd, offset, fieldLimit, ErrReaderLimitExceeded)
+	if err != nil && errors.Is(err, io.EOF) && headerEnd < sourceSize {
+		return "", 0, fmt.Errorf("%w: header section exceeds %d bytes", ErrReaderLimitExceeded, headerEnd-int64(headerSize))
+	}
+	if errors.Is(err, ErrReaderLimitExceeded) && fieldLimit == maxFieldBytes {
+		return "", 0, fmt.Errorf("%w: header field exceeds %d bytes", ErrReaderLimitExceeded, maxFieldBytes)
+	}
+
+	return value, n, err
+}
+
 // parseEntriesBuffered parses entry records from index table and returns payload start offset.
-func (r *Reader) parseEntriesBuffered(ra io.ReaderAt, tableOffset int64, size int64) (int64, error) {
+func (r *Reader) parseEntriesBuffered(ra io.ReaderAt, tableOffset int64, size int64, limits ReaderLimits) (int64, error) {
 	if tableOffset >= size {
 		return 0, fmt.Errorf("read entry filename: %w", io.EOF)
 	}
@@ -336,12 +416,12 @@ func (r *Reader) parseEntriesBuffered(ra io.ReaderAt, tableOffset int64, size in
 	off := tableOffset
 	var spill []byte
 	if r.entries == nil {
-		estimatedCap := estimateEntryCapacity(size - tableOffset)
-		r.entries = make([]EntryInfo, 0, estimatedCap)
+		entryCapacity := min(readerInitialEntryCapacity, limits.MaxEntries)
+		r.entries = make([]EntryInfo, 0, entryCapacity)
 	}
 
 	for {
-		filename, nameBytes, err := readNullTerminatedBuffered(br, &spill)
+		filename, nameBytes, err := readNullTerminatedBuffered(br, &spill, limits.MaxEntryNameBytes)
 		if err != nil {
 			return 0, fmt.Errorf("read entry filename: %w", err)
 		}
@@ -363,43 +443,37 @@ func (r *Reader) parseEntriesBuffered(ra io.ReaderAt, tableOffset int64, size in
 			return off, nil
 		}
 
-		if len(filename) > maxNameLen {
-			return 0, ErrFileNameTooLong
+		if len(r.entries) >= limits.MaxEntries {
+			return 0, fmt.Errorf("%w: more than %d entries", ErrReaderLimitExceeded, limits.MaxEntries)
 		}
 
-		r.entries = append(r.entries, EntryInfo{
+		r.entries = appendEntryInfo(r.entries, EntryInfo{
 			Path:         filename,
 			Offset:       offset,
 			DataSize:     dataSize,
 			OriginalSize: originalSize,
 			TimeStamp:    timestamp,
 			MimeType:     mimeType,
-		})
+		}, limits.MaxEntries)
 	}
 }
 
-// estimateEntryCapacity returns a conservative initial capacity for parsed entry metadata.
-func estimateEntryCapacity(remainingBytes int64) int {
-	if remainingBytes <= 0 {
-		return 0
+// appendEntryInfo doubles metadata capacity explicitly to avoid runtime growth churn.
+func appendEntryInfo(entries []EntryInfo, entry EntryInfo, maxEntries int) []EntryInfo {
+	if len(entries) == cap(entries) {
+		newCapacity := cap(entries) * 2
+		if newCapacity == 0 {
+			newCapacity = readerInitialEntryCapacity
+		}
+		if newCapacity > maxEntries || newCapacity < cap(entries) {
+			newCapacity = maxEntries
+		}
+		grown := make([]EntryInfo, len(entries), newCapacity)
+		copy(grown, entries)
+		entries = grown
 	}
 
-	const (
-		minCap = 128
-		maxCap = 65536
-		// remainingBytes includes payload region, so keep estimate intentionally conservative.
-		avgEntryBytes = 256
-	)
-
-	estimated := int(remainingBytes / avgEntryBytes)
-	if estimated < minCap {
-		return minCap
-	}
-	if estimated > maxCap {
-		return maxCap
-	}
-
-	return estimated
+	return append(entries, entry)
 }
 
 // resolveEntryOffsets applies selected offset policy and validates payload bounds.
@@ -409,6 +483,7 @@ func resolveEntryOffsets(entries []EntryInfo, dataStart int64, totalSize int64, 
 		if err := assignSequentialOffsets(entries, dataStart); err != nil {
 			return err
 		}
+
 	case OffsetModeStoredCompat:
 		usedStored, err := tryAssignStoredOffsets(entries, dataStart, totalSize)
 		if err != nil {
@@ -421,6 +496,7 @@ func resolveEntryOffsets(entries []EntryInfo, dataStart int64, totalSize int64, 
 				return err
 			}
 		}
+
 	case OffsetModeStoredStrict:
 		usedStored, err := tryAssignStoredOffsets(entries, dataStart, totalSize)
 		if err != nil {
@@ -431,6 +507,7 @@ func resolveEntryOffsets(entries []EntryInfo, dataStart int64, totalSize int64, 
 				return err
 			}
 		}
+
 	default:
 		return fmt.Errorf("%w: unknown offset mode %q", ErrInvalidEntryOffset, mode)
 	}
@@ -551,8 +628,8 @@ func validateResolvedOffsets(entries []EntryInfo, dataStart int64, totalSize int
 	return nil
 }
 
-// readNullTerminatedBuffered reads a NUL-terminated string from buffered stream.
-func readNullTerminatedBuffered(br *bufio.Reader, spill *[]byte) (string, int, error) {
+// readNullTerminatedBuffered reads a bounded NUL-terminated string from the index stream.
+func readNullTerminatedBuffered(br *bufio.Reader, spill *[]byte, maxBytes int) (string, int, error) {
 	consumed := 0
 	*spill = (*spill)[:0]
 
@@ -561,51 +638,90 @@ func readNullTerminatedBuffered(br *bufio.Reader, spill *[]byte) (string, int, e
 		consumed += len(chunk)
 
 		if err == bufio.ErrBufferFull {
-			*spill = append(*spill, chunk...)
+			if !appendBytesLimited(spill, chunk, maxBytes) {
+				return "", 0, ErrFileNameTooLong
+			}
 			continue
 		}
 
 		if err != nil {
+			if len(*spill)+len(chunk) > maxBytes {
+				return "", 0, ErrFileNameTooLong
+			}
 			return "", 0, err
 		}
 
 		segment := chunk[:len(chunk)-1]
+		if len(*spill)+len(segment) > maxBytes {
+			return "", 0, ErrFileNameTooLong
+		}
 		if len(*spill) == 0 {
 			return string(segment), consumed, nil
 		}
 
-		*spill = append(*spill, segment...)
+		if !appendBytesLimited(spill, segment, maxBytes) {
+			return "", 0, ErrFileNameTooLong
+		}
+
 		return string(*spill), consumed, nil
 	}
 }
 
-// readNullTerminated reads a zero-terminated string from ReaderAt starting at offset.
-func readNullTerminated(ra io.ReaderAt, offset int64) (string, int, error) {
+// readNullTerminated reads a bounded zero-terminated string from a declared source range.
+func readNullTerminated(ra io.ReaderAt, sourceSize int64, offset int64, maxBytes int, limitErr error) (string, int, error) {
+	if offset < 0 || offset >= sourceSize {
+		return "", 0, io.EOF
+	}
+	if maxBytes < 0 {
+		return "", 0, limitErr
+	}
+
+	if limitErr == nil {
+		limitErr = ErrReaderLimitExceeded
+	}
+
+	maxWireBytes := maxBytes
+	if maxWireBytes < int(^uint(0)>>1) {
+		maxWireBytes++
+	}
+	if available := sourceSize - offset; int64(maxWireBytes) > available {
+		maxWireBytes = int(available)
+	}
 	total := 0
 	var out []byte
 
 	// Scan larger chunks to avoid one-byte ReadAt calls on large indices.
 	var chunk [readerScanChunkSize]byte
-	for {
-		n, err := ra.ReadAt(chunk[:], offset+int64(total))
+	for total < maxWireBytes {
+		readSize := min(len(chunk), maxWireBytes-total)
+		n, err := ra.ReadAt(chunk[:readSize], offset+int64(total))
 		if n > 0 {
 			part := chunk[:n]
 			if idx := bytes.IndexByte(part, 0); idx >= 0 {
+				if total+idx > maxBytes {
+					return "", 0, limitErr
+				}
+
 				consumed := total + idx + 1
 				if len(out) == 0 {
 					return string(part[:idx]), consumed, nil
 				}
 
-				out = append(out, part[:idx]...)
+				if !appendBytesLimited(&out, part[:idx], maxBytes) {
+					return "", 0, limitErr
+				}
+
 				return string(out), consumed, nil
 			}
 
-			if len(out) == 0 {
-				// Most names fit in one chunk; lazy allocation keeps short names cheap.
-				out = make([]byte, 0, n*2)
+			if total+n > maxBytes {
+				return "", 0, limitErr
 			}
 
-			out = append(out, part...)
+			if !appendBytesLimited(&out, part, maxBytes) {
+				return "", 0, limitErr
+			}
+
 			total += n
 		}
 
@@ -617,4 +733,25 @@ func readNullTerminated(ra io.ReaderAt, offset int64) (string, int, error) {
 			return "", 0, io.EOF
 		}
 	}
+
+	return "", 0, limitErr
+}
+
+// appendBytesLimited grows a byte slice without exceeding its configured capacity bound.
+func appendBytesLimited(dst *[]byte, data []byte, maxBytes int) bool {
+	needed := len(*dst) + len(data)
+	if needed > maxBytes {
+		return false
+	}
+
+	if needed > cap(*dst) {
+		newCapacity := min(max(readerScanChunkSize, cap(*dst)*2), maxBytes)
+		newCapacity = max(newCapacity, needed)
+		grown := make([]byte, len(*dst), newCapacity)
+		copy(grown, *dst)
+		*dst = grown
+	}
+	*dst = append(*dst, data...)
+
+	return true
 }
