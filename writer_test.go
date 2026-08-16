@@ -9,10 +9,12 @@ import (
 	"context"
 	"errors"
 	"io"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/woozymasta/lzss"
 	"github.com/woozymasta/pathrules"
 )
 
@@ -436,60 +438,252 @@ func TestPack_KnownSizeOverMaxCompressSizeStaysRaw(t *testing.T) {
 	}
 }
 
-// TestCompressCandidate_FalseLowSizeHintReadsBeyondMemoryLimit captures the pre-fix read behavior safely.
-func TestCompressCandidate_FalseLowSizeHintReadsBeyondMemoryLimit(t *testing.T) {
-	const (
-		maxCompressSize = int64(1024)
-		readLimit       = int64(64 * 1024)
-	)
-	src := &countingLimitReader{limit: readLimit}
+// TestCompressCandidate_FalseLowSizeHintFallsBackToRaw verifies the hard candidate cap and one-open fallback.
+func TestCompressCandidate_FalseLowSizeHintFallsBackToRaw(t *testing.T) {
+	const maxCompressSize = 1024
+	payload := bytes.Repeat([]byte("payload"), 1024)
+	src := &observedReadReader{reader: bytes.NewReader(payload)}
+	dst := &observedWriteBuffer{src: src}
 	opts := PackOptions{
 		MinCompressSize: 1,
-		MaxCompressSize: uint32(maxCompressSize),
+		MaxCompressSize: maxCompressSize,
 	}
 	opts.applyDefaults()
 
-	_, err := writeCompressedCandidatePayloadInMemory(
-		io.Discard,
+	record, err := writeCompressedCandidatePayload(
+		dst,
 		src,
 		Input{Path: "false-low.txt", SizeHint: 1},
 		opts,
 		0,
 		make([]byte, 32*1024),
-		1<<30,
 	)
-	if err == nil {
-		t.Fatal("expected synthetic reader limit error")
+	if err != nil {
+		t.Fatalf("writeCompressedCandidatePayload: %v", err)
 	}
-	if src.read != readLimit {
-		t.Fatalf("read %d bytes, want controlled limit %d", src.read, readLimit)
+	if src.read != int64(len(payload)) {
+		t.Fatalf("read %d bytes, want %d", src.read, len(payload))
 	}
-	if src.read <= maxCompressSize {
-		t.Fatalf("read %d bytes, want evidence of reading beyond MaxCompressSize %d", src.read, maxCompressSize)
+	if dst.firstWriteRead != maxCompressSize+1 {
+		t.Fatalf("first write after %d bytes read, want %d", dst.firstWriteRead, maxCompressSize+1)
+	}
+	if !bytes.Equal(dst.data.Bytes(), payload) {
+		t.Fatal("raw fallback output differs from source")
+	}
+	if record.mime != MimeNil || record.dataSize != uint32(len(payload)) || record.originalSize != 0 {
+		t.Fatalf("fallback metadata = %+v, want uncompressed entry", record)
 	}
 }
 
-// countingLimitReader supplies bytes up to a fixed limit, then returns an error.
-type countingLimitReader struct {
-	read  int64 // Total bytes supplied to the candidate reader.
-	limit int64 // Maximum bytes supplied before the synthetic error.
+// TestCompressCandidateBoundaries checks exact-limit, over-limit, and incompressible payload decisions.
+func TestCompressCandidateBoundaries(t *testing.T) {
+	const maxCompressSize = 1024
+	incompressible := make([]byte, maxCompressSize)
+	rng := rand.New(rand.NewSource(42))
+	if _, err := rng.Read(incompressible); err != nil {
+		t.Fatalf("generate incompressible input: %v", err)
+	}
+
+	testCases := []struct {
+		name       string
+		payload    []byte
+		sizeHint   int64
+		wantMime   MimeType
+		wantOrigSz uint32
+	}{
+		{
+			name:       "exact max compressible",
+			payload:    bytes.Repeat([]byte("x"), maxCompressSize),
+			sizeHint:   maxCompressSize,
+			wantMime:   MimeCompress,
+			wantOrigSz: maxCompressSize,
+		},
+		{
+			name:     "max plus one",
+			payload:  bytes.Repeat([]byte("x"), maxCompressSize+1),
+			sizeHint: 1,
+			wantMime: MimeNil,
+		},
+		{
+			name:     "incompressible within max",
+			payload:  incompressible,
+			sizeHint: maxCompressSize,
+			wantMime: MimeNil,
+		},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			opts := PackOptions{MinCompressSize: 1, MaxCompressSize: maxCompressSize}
+			opts.applyDefaults()
+			var dst bytes.Buffer
+			record, err := writeCompressedCandidatePayload(
+				&dst,
+				bytes.NewReader(tc.payload),
+				Input{Path: "boundary.bin", SizeHint: tc.sizeHint},
+				opts,
+				0,
+				make([]byte, 32*1024),
+			)
+			if err != nil {
+				t.Fatalf("writeCompressedCandidatePayload: %v", err)
+			}
+			if record.mime != tc.wantMime {
+				t.Fatalf("mime = %v, want %v", record.mime, tc.wantMime)
+			}
+			if record.originalSize != tc.wantOrigSz {
+				t.Fatalf("original size = %d, want %d", record.originalSize, tc.wantOrigSz)
+			}
+			if tc.wantMime == MimeNil && !bytes.Equal(dst.Bytes(), tc.payload) {
+				t.Fatal("raw output differs from source")
+			}
+		})
+	}
 }
 
-// Read counts supplied bytes without allocating a payload-sized fixture.
-func (r *countingLimitReader) Read(p []byte) (int, error) {
-	if r.read >= r.limit {
-		return 0, errors.New("synthetic reader limit reached")
+// TestCompressCandidateAcrossChunksRoundTripsDeterministically verifies multi-chunk stream compression.
+func TestCompressCandidateAcrossChunksRoundTripsDeterministically(t *testing.T) {
+	payload := bytes.Repeat([]byte("chunk-boundary-data-"), 150_000)
+	opts := PackOptions{MinCompressSize: 1, MaxCompressSize: 4 << 20}
+	opts.applyDefaults()
+	var dst bytes.Buffer
+
+	record, err := writeCompressedCandidatePayload(
+		&dst,
+		bytes.NewReader(payload),
+		Input{Path: "multi-chunk.bin", SizeHint: int64(len(payload))},
+		opts,
+		0,
+		make([]byte, 32*1024),
+	)
+	if err != nil {
+		t.Fatalf("writeCompressedCandidatePayload: %v", err)
+	}
+	if record.mime != MimeCompress || record.originalSize != uint32(len(payload)) {
+		t.Fatalf("record = %+v, want compressed entry of %d bytes", record, len(payload))
 	}
 
-	n := len(p)
-	if remaining := r.limit - r.read; int64(n) > remaining {
-		n = int(remaining)
+	var decoded bytes.Buffer
+	if _, err := lzss.DecompressToWriter(&decoded, bytes.NewReader(dst.Bytes()), len(payload), nil); err != nil {
+		t.Fatalf("DecompressToWriter: %v", err)
+	}
+	if !bytes.Equal(decoded.Bytes(), payload) {
+		t.Fatal("multi-chunk decompression differs from source")
 	}
 
-	clear(p[:n])
+	var repeated bytes.Buffer
+	if _, err := writeCompressedCandidatePayload(
+		&repeated,
+		bytes.NewReader(payload),
+		Input{Path: "multi-chunk.bin", SizeHint: int64(len(payload))},
+		opts,
+		0,
+		make([]byte, 32*1024),
+	); err != nil {
+		t.Fatalf("repeat writeCompressedCandidatePayload: %v", err)
+	}
+	if !bytes.Equal(repeated.Bytes(), dst.Bytes()) {
+		t.Fatal("multi-chunk compression output is not deterministic")
+	}
+}
+
+// TestCompressCandidateRejectsSourceBeyondRemainingPBOAddressSpace verifies offset-bound enforcement.
+func TestCompressCandidateRejectsSourceBeyondRemainingPBOAddressSpace(t *testing.T) {
+	const remaining = 100
+	payload := bytes.Repeat([]byte("x"), remaining+1)
+	src := &observedReadReader{reader: bytes.NewReader(payload)}
+	var dst bytes.Buffer
+	opts := PackOptions{MinCompressSize: 1, MaxCompressSize: 1024}
+	opts.applyDefaults()
+
+	_, err := writeCompressedCandidatePayload(
+		&dst,
+		src,
+		Input{Path: "too-large.bin", SizeHint: 1},
+		opts,
+		^uint32(0)-remaining,
+		make([]byte, 32*1024),
+	)
+	if !errors.Is(err, ErrSizeOverflow) {
+		t.Fatalf("expected ErrSizeOverflow, got %v", err)
+	}
+	if src.read != remaining+1 {
+		t.Fatalf("read %d bytes, want %d-byte overflow probe", src.read, remaining+1)
+	}
+	if dst.Len() != 0 {
+		t.Fatalf("wrote %d bytes before address-space overflow", dst.Len())
+	}
+}
+
+// TestPack_AdvisorySizeHintsDoNotRejectActualSmallArchive verifies actual streamed bytes govern PBO size.
+func TestPack_AdvisorySizeHintsDoNotRejectActualSmallArchive(t *testing.T) {
+	outPath := filepath.Join(t.TempDir(), "out.pbo")
+	openSource := func(data []byte) func() (io.ReadCloser, error) {
+		return func() (io.ReadCloser, error) {
+			return io.NopCloser(bytes.NewReader(data)), nil
+		}
+	}
+	inputs := []Input{
+		{Path: "a.bin", Open: openSource([]byte("a")), SizeHint: maxPBOData/2 + 1},
+		{Path: "b.bin", Open: openSource([]byte("b")), SizeHint: maxPBOData/2 + 1},
+	}
+
+	f, err := os.Create(outPath)
+	if err != nil {
+		t.Fatalf("create output: %v", err)
+	}
+	if _, err := Pack(t.Context(), f, inputs, PackOptions{}); err != nil {
+		_ = f.Close()
+		t.Fatalf("Pack rejected actual small payloads: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("close output: %v", err)
+	}
+
+	r, err := Open(outPath)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = r.Close() }()
+	if got := len(r.Entries()); got != len(inputs) {
+		t.Fatalf("entries = %d, want %d", got, len(inputs))
+	}
+}
+
+// observedReadReader counts bytes consumed from its wrapped source.
+type observedReadReader struct {
+	// reader is the wrapped source.
+	reader io.Reader
+	// read is the total number of bytes consumed from the source.
+	read int64
+}
+
+// Read forwards bytes while tracking source consumption.
+func (r *observedReadReader) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
 	r.read += int64(n)
 
-	return n, nil
+	return n, err
+}
+
+// observedWriteBuffer records source consumption when the first write begins.
+type observedWriteBuffer struct {
+	// src is the source whose read count is sampled at the first write.
+	src *observedReadReader
+	// data stores all bytes written to the buffer.
+	data bytes.Buffer
+	// firstWriteRead records how much source data was consumed before writing began.
+	firstWriteRead int64
+}
+
+// Write records the first-write boundary and stores all written bytes.
+func (w *observedWriteBuffer) Write(p []byte) (int, error) {
+	if w.firstWriteRead == 0 {
+		w.firstWriteRead = w.src.read
+	}
+
+	return w.data.Write(p)
 }
 
 func TestPack_TelemetryAndOnEntryDone(t *testing.T) {

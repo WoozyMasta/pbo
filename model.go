@@ -134,8 +134,9 @@ type PackOptions struct {
 	// MinCompressSize disables compression for entries smaller than this size.
 	// Default is 512 bytes.
 	MinCompressSize uint32 `json:"min_compress_size,omitempty" yaml:"min_compress_size,omitempty"`
-	// MaxCompressSize disables compression for entries larger than this size.
-	// Default is 16 MiB and also bounds known-size in-memory compression path.
+	// MaxCompressSize bounds raw candidate buffering; one extra byte detects fallback.
+	// Codec output may add temporary memory.
+	// Default is 16 MiB. Larger inputs are streamed raw even when SizeHint is too small.
 	MaxCompressSize uint32 `json:"max_compress_size,omitempty" yaml:"max_compress_size,omitempty"`
 	// signHashVersion enables streaming fileHash computation during pack; set by PackAndHash*.
 	// Zero disables inline hashing. Skipped for sealed PBOs (bytes change after sealing).

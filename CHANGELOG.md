@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning][].
 * Reader parsing now applies configurable limits
   to header fields, properties, entry names and index records.
   Entry metadata preallocation no longer scales with total archive size.
+* Compression candidates buffer at most `MaxCompressSize + 1` bytes
+  before falling back to raw streaming when `SizeHint` is too small.
 
 ## [0.3.0][] - 2026-07-01
 

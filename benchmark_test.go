@@ -293,6 +293,39 @@ func BenchmarkPackWithCompress(b *testing.B) {
 	}
 }
 
+// BenchmarkPackWithCompressFalseLowSizeHint measures bounded raw fallback for an underestimated candidate.
+func BenchmarkPackWithCompressFalseLowSizeHint(b *testing.B) {
+	data := bytes.Repeat([]byte("x"), 32<<20)
+	inputs := []Input{{
+		Path: "data/large.dat",
+		Open: func() (io.ReadCloser, error) {
+			return io.NopCloser(bytes.NewReader(data)), nil
+		},
+		SizeHint: 1,
+	}}
+	opts := PackOptions{
+		Compress:        includeRules("*"),
+		MinCompressSize: 1,
+		MaxCompressSize: DefaultMaxCompressSize,
+	}
+	dir := b.TempDir()
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		out := filepath.Join(dir, fmt.Sprintf("false-low-%d.pbo", i))
+		f, err := os.Create(out)
+		if err != nil {
+			b.Fatal(err)
+		}
+		_, err = Pack(context.Background(), f, inputs, opts)
+		_ = f.Close()
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func BenchmarkPackWithCompressNoMatch(b *testing.B) {
 	data := bytes.Repeat([]byte("x"), 2000)
 	inputs := make([]Input, 10)

@@ -6,7 +6,6 @@ package pbo
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"crypto/sha1" //nolint:gosec // Signature format requires SHA1.
 	"encoding/binary"
@@ -38,6 +37,8 @@ var (
 const (
 	// packCopyBufferSize is per-pack temporary buffer used by streaming payload copy.
 	packCopyBufferSize = 64 * 1024
+	// compressionCandidateChunkSize bounds each retained piece of a compression candidate.
+	compressionCandidateChunkSize = 1 * 1024 * 1024
 )
 
 // writtenEntry stores concrete entry values produced during payload write.
@@ -377,17 +378,6 @@ func preparePackRewritePlan(inputs []Input) ([]rewriteEntry, error) {
 
 	if err := validateUniqueEntryPaths(sorted); err != nil {
 		return nil, err
-	}
-
-	var total int64
-	for i := range sorted {
-		if sorted[i].SizeHint > 0 {
-			total += sorted[i].SizeHint
-		}
-	}
-
-	if total > maxPBOData {
-		return nil, fmt.Errorf("%w: estimated data %d exceeds 4 GiB", ErrSizeOverflow, total)
 	}
 
 	rewritePlan := make([]rewriteEntry, len(sorted))
@@ -856,7 +846,7 @@ func shouldUseInMemoryCompressPath(opts PackOptions, sizeHint int64, maxEntrySiz
 	return true
 }
 
-// writeCompressedCandidatePayloadInMemory handles small/known-size candidates using in-memory compression.
+// writeCompressedCandidatePayloadInMemory buffers at most MaxCompressSize+1 bytes before deciding whether to compress.
 func writeCompressedCandidatePayloadInMemory(
 	dst io.Writer,
 	src io.Reader,
@@ -866,12 +856,21 @@ func writeCompressedCandidatePayloadInMemory(
 	copyBuf []byte,
 	maxEntrySize int64,
 ) (writtenEntry, error) {
-	raw, err := readPayloadBounded(src, maxEntrySize, in.SizeHint, int64(opts.MaxCompressSize), copyBuf)
+	candidateLimit := min(int64(opts.MaxCompressSize), maxEntrySize)
+	chunks, rawSize, overLimit, err := readCompressionCandidate(src, candidateLimit, in.SizeHint)
 	if err != nil {
 		return writtenEntry{}, fmt.Errorf("stream input %s: %w", in.Path, err)
 	}
 
-	originalSize, err := checkedDataSize(in.Path, int64(len(raw)), currentOffset)
+	if overLimit {
+		if rawSize > maxEntrySize {
+			return writtenEntry{}, fmt.Errorf("stream input %s: %w", in.Path, ErrSizeOverflow)
+		}
+
+		return writeRawCompressionFallback(dst, src, in, chunks, rawSize, currentOffset, maxEntrySize, copyBuf)
+	}
+
+	originalSize, err := checkedDataSize(in.Path, rawSize, currentOffset)
 	if err != nil {
 		return writtenEntry{}, err
 	}
@@ -883,19 +882,25 @@ func writeCompressedCandidatePayloadInMemory(
 		timestamp: timeToUint32(in.ModTime),
 	}
 	if !shouldCompressBySize(opts, originalSize) {
-		if _, err := dst.Write(raw); err != nil {
+		if err := writeRawChunks(dst, chunks); err != nil {
 			return writtenEntry{}, fmt.Errorf("write payload %s: %w", in.Path, err)
 		}
 
 		return record, nil
 	}
 
-	compressed, err := compressLZSS(raw)
+	var compressed []byte
+	if len(chunks) == 1 {
+		compressed, err = compressLZSS(chunks[0])
+	} else {
+		compressed, err = compressLZSSReader(&byteChunksReader{chunks: chunks})
+	}
 	if err != nil {
 		return writtenEntry{}, fmt.Errorf("compress %s: %w", in.Path, err)
 	}
-	if len(compressed) >= len(raw) {
-		if _, err := dst.Write(raw); err != nil {
+
+	if int64(len(compressed)) >= rawSize {
+		if err := writeRawChunks(dst, chunks); err != nil {
 			return writtenEntry{}, fmt.Errorf("write payload %s: %w", in.Path, err)
 		}
 
@@ -910,29 +915,174 @@ func writeCompressedCandidatePayloadInMemory(
 	record.dataSize = dataSize
 	record.originalSize = originalSize
 	record.mime = MimeCompress
-	if _, err := dst.Write(compressed); err != nil {
+	if err := writePayloadBytes(dst, compressed); err != nil {
 		return writtenEntry{}, fmt.Errorf("write payload %s: %w", in.Path, err)
 	}
 
 	return record, nil
 }
 
-// readPayloadBounded reads whole payload into memory with strict max-size enforcement.
-func readPayloadBounded(src io.Reader, limit int64, sizeHint int64, inMemoryLimit int64, copyBuf []byte) ([]byte, error) {
-	var dst bytes.Buffer
-	if sizeHint > 0 && sizeHint <= inMemoryLimit {
-		dst.Grow(int(sizeHint))
+// readCompressionCandidate retains no more than limit+1 source bytes and reports whether the source exceeded limit.
+func readCompressionCandidate(src io.Reader, limit int64, sizeHint int64) ([][]byte, int64, bool, error) {
+	if src == nil {
+		return nil, 0, false, ErrNilReader
+	}
+	if limit < 0 || limit == int64(^uint64(0)>>1) {
+		return nil, 0, false, ErrSizeOverflow
 	}
 
-	written, err := copyPayloadBounded(&dst, src, limit, copyBuf)
+	readLimit := limit + 1
+	chunkSize := int64(compressionCandidateChunkSize)
+	initialChunkSize := chunkSize
+	if sizeHint > 0 && sizeHint < chunkSize {
+		initialChunkSize = sizeHint
+	}
+	chunks := make([][]byte, 0)
+	var total int64
+
+	emptyReads := 0
+	for total < readLimit {
+		var firstByte byte
+		hasFirstByte := false
+		if total > 0 {
+			for {
+				var probe [1]byte
+				n, err := src.Read(probe[:])
+				if n > 0 {
+					emptyReads = 0
+					firstByte = probe[0]
+					hasFirstByte = true
+					if err != nil && err != io.EOF {
+						return nil, total + 1, false, err
+					}
+
+					if err == io.EOF {
+						chunks = append(chunks, []byte{firstByte})
+						total++
+						return chunks, total, total > limit, nil
+					}
+
+					break
+				}
+
+				if err == io.EOF {
+					return chunks, total, total > limit, nil
+				}
+				if err != nil {
+					return nil, total, false, err
+				}
+
+				emptyReads++
+				if emptyReads > 100 {
+					return nil, total, false, io.ErrNoProgress
+				}
+			}
+		}
+
+		currentChunkSize := chunkSize
+		if total == 0 {
+			currentChunkSize = initialChunkSize
+		}
+		currentChunkSize = min(currentChunkSize, readLimit-total)
+		chunk := make([]byte, int(currentChunkSize))
+		filled := 0
+		if hasFirstByte {
+			chunk[0] = firstByte
+			filled = 1
+		}
+
+		for filled < len(chunk) {
+			n, err := src.Read(chunk[filled:])
+			filled += n
+			if n > 0 {
+				emptyReads = 0
+			}
+
+			if err != nil {
+				if err != io.EOF {
+					return nil, total + int64(filled), false, err
+				}
+
+				if filled > 0 {
+					chunks = append(chunks, chunk[:filled])
+					total += int64(filled)
+				}
+
+				return chunks, total, total > limit, nil
+			}
+
+			if n == 0 {
+				emptyReads++
+				if emptyReads > 100 {
+					return nil, total + int64(filled), false, io.ErrNoProgress
+				}
+			}
+		}
+
+		chunks = append(chunks, chunk)
+		total += int64(filled)
+	}
+
+	return chunks, total, true, nil
+}
+
+// writeRawCompressionFallback writes the buffered over-limit prefix and streams the remaining source raw.
+func writeRawCompressionFallback(
+	dst io.Writer,
+	src io.Reader,
+	in Input,
+	prefix [][]byte,
+	prefixSize int64,
+	currentOffset uint32,
+	maxEntrySize int64,
+	copyBuf []byte,
+) (writtenEntry, error) {
+	if err := writeRawChunks(dst, prefix); err != nil {
+		return writtenEntry{}, fmt.Errorf("write payload %s: %w", in.Path, err)
+	}
+
+	remaining := maxEntrySize - prefixSize
+	streamed, err := copyPayloadBounded(dst, src, remaining, copyBuf)
 	if err != nil {
-		return nil, err
-	}
-	if int64(dst.Len()) != written {
-		return nil, fmt.Errorf("short read into memory (%d/%d)", dst.Len(), written)
+		return writtenEntry{}, fmt.Errorf("stream input %s: %w", in.Path, err)
 	}
 
-	return dst.Bytes(), nil
+	total := prefixSize + streamed
+	dataSize, err := checkedDataSize(in.Path, total, currentOffset)
+	if err != nil {
+		return writtenEntry{}, err
+	}
+
+	return writtenEntry{
+		path:      in.Path,
+		dataSize:  dataSize,
+		mime:      MimeNil,
+		timestamp: timeToUint32(in.ModTime),
+	}, nil
+}
+
+// writeRawChunks writes retained candidate bytes without creating another payload-sized allocation.
+func writeRawChunks(dst io.Writer, chunks [][]byte) error {
+	for _, chunk := range chunks {
+		if err := writePayloadBytes(dst, chunk); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// writePayloadBytes writes a complete buffered payload and detects short writes.
+func writePayloadBytes(dst io.Writer, payload []byte) error {
+	n, err := dst.Write(payload)
+	if err != nil {
+		return err
+	}
+	if n != len(payload) {
+		return io.ErrShortWrite
+	}
+
+	return nil
 }
 
 // writeSourcePackedPayload copies already packed bytes from source archive.

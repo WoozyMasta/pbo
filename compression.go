@@ -5,7 +5,9 @@
 package pbo
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 
 	"github.com/woozymasta/lzss"
 	"github.com/woozymasta/pathrules"
@@ -14,6 +16,43 @@ import (
 // compressMatcher holds compiled allow-list rules for compression.
 type compressMatcher struct {
 	matcher *pathrules.Matcher
+}
+
+// byteChunksReader reads retained candidate chunks as one continuous byte stream.
+type byteChunksReader struct {
+	// chunks are source segments retained within the candidate memory limit.
+	chunks [][]byte
+	// chunkIndex identifies the next source segment.
+	chunkIndex int
+	// chunkOffset is the next unread byte within the current segment.
+	chunkOffset int
+}
+
+// Read fills p across chunk boundaries to preserve the stream shape of a contiguous source.
+func (r *byteChunksReader) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+
+	total := 0
+	for len(p) > 0 && r.chunkIndex < len(r.chunks) {
+		chunk := r.chunks[r.chunkIndex]
+		if r.chunkOffset >= len(chunk) {
+			r.chunkIndex++
+			r.chunkOffset = 0
+			continue
+		}
+
+		n := copy(p, chunk[r.chunkOffset:])
+		total += n
+		p = p[n:]
+		r.chunkOffset += n
+	}
+	if total > 0 {
+		return total, nil
+	}
+
+	return 0, io.EOF
 }
 
 // newCompressMatcher compiles compression path rules.
@@ -88,4 +127,14 @@ func shouldCompressBySize(opts PackOptions, size uint32) bool {
 // compressLZSS compresses the data using LZSS.
 func compressLZSS(data []byte) ([]byte, error) {
 	return lzss.Compress(data, lzss.DefaultCompressOptions())
+}
+
+// compressLZSSReader compresses a stream into memory without combining input chunks first.
+func compressLZSSReader(src io.Reader) ([]byte, error) {
+	var compressed bytes.Buffer
+	if _, _, err := lzss.CompressToWriter(&compressed, src, nil); err != nil {
+		return nil, err
+	}
+
+	return compressed.Bytes(), nil
 }

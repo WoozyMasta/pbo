@@ -11,7 +11,8 @@ works without loading full archive payload into memory.
 Compression rules (summary):
   - path decision must include entry via PackOptions.Compress rules;
   - final entry size must be within [MinCompressSize, MaxCompressSize];
-  - known-size inputs use in-memory compression path (bounded by MaxCompressSize);
+  - candidate input buffering is bounded by MaxCompressSize+1 bytes, even when SizeHint is too small;
+  - compression codec output may temporarily require additional memory;
   - unknown-size inputs are streamed raw (no temp-file fallback);
   - compression is written only when result is smaller than source.
 
