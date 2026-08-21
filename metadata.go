@@ -42,7 +42,7 @@ func ReadHeadersFromReaderAtWithOptions(ra io.ReaderAt, size int64, opts ReaderO
 		return nil, fmt.Errorf("%w: short header", ErrInvalidHeader)
 	}
 
-	readerAt, err := prepareReaderAtWithSealedOptions(ra, size, opts.SealedKey, opts.Limits)
+	readerAt, err := prepareReaderAtWithSealedOptions(ra, size, opts.SealedKey, opts.TrailerMode, opts.Limits)
 	if err != nil {
 		return nil, err
 	}
@@ -95,7 +95,7 @@ func ListEntriesFromReaderAtWithOptions(ra io.ReaderAt, size int64, opts ReaderO
 		return nil, fmt.Errorf("%w: short header", ErrInvalidHeader)
 	}
 
-	readerAt, err := prepareReaderAtWithSealedOptions(ra, size, opts.SealedKey, opts.Limits)
+	readerAt, err := prepareReaderAtWithSealedOptions(ra, size, opts.SealedKey, opts.TrailerMode, opts.Limits)
 	if err != nil {
 		return nil, err
 	}

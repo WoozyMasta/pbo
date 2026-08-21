@@ -62,12 +62,16 @@ type Reader struct {
 	dataStart int64
 	// entryIndexOnce initializes entryIndex lazily on first path lookup.
 	entryIndexOnce sync.Once
+	// trailerVerifyOnce caches lazy public trailer verification.
+	trailerVerifyOnce sync.Once
 	// mu guards closed state and close operation.
 	mu sync.Mutex
 	// sha1Trailer stores optional trailer hash when present.
 	sha1Trailer [shaSize]byte
-	// hasTrailer reports whether trailing 0x00 + SHA1 was detected.
-	hasTrailer bool
+	// trailerCandidate reports a structurally plausible optional trailer.
+	trailerCandidate bool
+	// trailerVerified reports whether the candidate digest matches archive content.
+	trailerVerified bool
 	// closed reports whether Close was already called.
 	closed bool
 }
@@ -119,7 +123,7 @@ func NewReaderFromReaderAt(ra io.ReaderAt, size int64) (*Reader, error) {
 func NewReaderFromReaderAtWithOptions(ra io.ReaderAt, size int64, opts ReaderOptions) (*Reader, error) {
 	opts.applyDefaults()
 
-	readerAt, err := prepareReaderAtWithSealedOptions(ra, size, opts.SealedKey, opts.Limits)
+	readerAt, err := prepareReaderAtWithSealedOptions(ra, size, opts.SealedKey, opts.TrailerMode, opts.Limits)
 	if err != nil {
 		return nil, err
 	}
@@ -200,14 +204,39 @@ func (r *Reader) Close() error {
 	return nil
 }
 
-// SHA1Trailer returns parsed 20-byte trailer hash when present.
+// SHA1Trailer returns the optional trailer digest only when its content hash verifies.
 func (r *Reader) SHA1Trailer() ([20]byte, bool) {
-	if r == nil || !r.hasTrailer {
+	if r == nil || !r.trailerCandidate {
+		var z [20]byte
+		return z, false
+	}
+
+	r.trailerVerifyOnce.Do(func() {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		if r.closed {
+			return
+		}
+
+		got, ok, err := verifySHA1Trailer(r.rawReaderAt(), r.size)
+		r.trailerVerified = err == nil && ok && got == r.sha1Trailer
+	})
+
+	if !r.trailerVerified {
 		var z [20]byte
 		return z, false
 	}
 
 	return r.sha1Trailer, true
+}
+
+// rawReaderAt returns the encoded source beneath an optional sealed decoder.
+func (r *Reader) rawReaderAt() io.ReaderAt {
+	if sealed, ok := r.ra.(*sealedReaderAt); ok {
+		return sealed.source
+	}
+
+	return r.ra
 }
 
 // parse reads and validates PBO structure from ReaderAt.
@@ -227,6 +256,7 @@ func (r *Reader) parse(ra io.ReaderAt, size int64, opts ReaderOptions) error {
 	if err := resolveEntryOffsets(r.entries, r.dataStart, size, opts.OffsetMode); err != nil {
 		return err
 	}
+	payloadEnd := expectedPayloadEnd(r.entries, r.dataStart)
 
 	// EnableJunkFilter drops clearly unusable table rows:
 	// zero-size entries, broken compressed rows, and unsafe/raw invalid paths.
@@ -275,16 +305,61 @@ func (r *Reader) parse(ra io.ReaderAt, size int64, opts ReaderOptions) error {
 		r.entries = sanitizedEntries
 	}
 
-	// check for SHA1 trailer
-	if size >= 21 {
-		var tail [21]byte
-		if _, err := ra.ReadAt(tail[:], size-21); err == nil && tail[0] == 0x00 {
-			r.hasTrailer = true
-			copy(r.sha1Trailer[:], tail[1:21])
+	trailerCandidate, digest, err := detectPlainTrailer(ra, size, payloadEnd, opts.TrailerMode)
+	if err != nil {
+		return err
+	}
+	r.trailerCandidate = trailerCandidate
+	r.sha1Trailer = digest
+
+	return nil
+}
+
+// detectPlainTrailer applies structural checks without hashing the archive during Open.
+func detectPlainTrailer(ra io.ReaderAt, size, payloadEnd int64, mode TrailerMode) (bool, [20]byte, error) {
+	var digest [20]byte
+	if mode == TrailerModeAbsent {
+		return false, digest, nil
+	}
+
+	if size < shaSize+1 {
+		if mode == TrailerModePresent {
+			return false, digest, ErrTrailerTooShort
+		}
+		return false, digest, nil
+	}
+
+	var tail [shaSize + 1]byte
+	if _, err := ra.ReadAt(tail[:], size-int64(len(tail))); err != nil {
+		return false, digest, fmt.Errorf("read trailer candidate: %w", err)
+	}
+
+	if tail[0] != 0 {
+		if mode == TrailerModePresent {
+			return false, digest, ErrInvalidTrailerPrefix
+		}
+		return false, digest, nil
+	}
+
+	if mode == TrailerModeAuto && payloadEnd != size-int64(len(tail)) {
+		return false, digest, nil
+	}
+
+	copy(digest[:], tail[1:])
+	return true, digest, nil
+}
+
+// expectedPayloadEnd returns the greatest end offset among resolved entries.
+func expectedPayloadEnd(entries []EntryInfo, emptyEnd int64) int64 {
+	end := emptyEnd
+	for _, entry := range entries {
+		entryEnd := int64(entry.Offset) + int64(entry.DataSize)
+		if entryEnd > end {
+			end = entryEnd
 		}
 	}
 
-	return nil
+	return end
 }
 
 // parseRawMetadata reads lossless header and index data shared by Reader and list APIs.

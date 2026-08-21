@@ -23,6 +23,10 @@ and this project adheres to [Semantic Versioning][].
   Entry metadata preallocation no longer scales with total archive size.
 * Compression candidates buffer at most `MaxCompressSize + 1` bytes
   before falling back to raw streaming when `SizeHint` is too small.
+* Trailer detection now checks the resolved payload boundary,
+  and `SHA1Trailer()` returns only a digest that verifies against the archive.
+  `ReaderOptions.TrailerMode` can force trailer presence or absence;
+  sealed auto-detection verifies a candidate digest before choosing its seed.
 
 ## [0.3.0][] - 2026-07-01
 

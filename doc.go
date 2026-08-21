@@ -77,6 +77,13 @@ For archives with meaningful non-zero index offsets, use compatibility mode:
 	}
 	defer r.Close()
 
+`SHA1Trailer` returns a digest only after verifying it.
+Plain archive opening uses the resolved payload end
+to identify a possible trailer without hashing the payload.
+Sealed archives in auto mode verify a zero-prefixed candidate
+to select the transform seed; callers that already know the layout can set
+[TrailerModePresent] or [TrailerModeAbsent] to skip that verification pass.
+
 # Extracting
 
 Extract all entries to a directory (parallel workers):

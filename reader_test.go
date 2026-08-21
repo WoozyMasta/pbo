@@ -1062,6 +1062,23 @@ func TestCheckSHA1Trailer(t *testing.T) {
 	if hash == [20]byte{} {
 		t.Error("expected non-zero hash")
 	}
+
+	r, err := Open(pboPath)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = r.Close() }()
+	got, ok := r.SHA1Trailer()
+	if !ok || got != hash {
+		t.Fatalf("SHA1Trailer() = (%x, %t), want (%x, true)", got, ok, hash)
+	}
+	hashSet, err := computeHashSetFromReader(r, SignVersionV2, GameTypeArma)
+	if err != nil {
+		t.Fatalf("computeHashSetFromReader: %v", err)
+	}
+	if hashSet.Hash1 != hash {
+		t.Fatalf("hash1 = %x, want trailer digest %x", hashSet.Hash1, hash)
+	}
 }
 
 func TestPack_EmptyInputs(t *testing.T) {

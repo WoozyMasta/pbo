@@ -5,6 +5,7 @@
 package pbo
 
 import (
+	"bytes"
 	"crypto/sha1" //nolint:gosec // Signature format requires SHA1.
 	"fmt"
 	"io"
@@ -51,12 +52,13 @@ func computeHashSetFromReader(r *Reader, version SignVersion, gameType GameType)
 		return HashSet{}, ErrNilReader
 	}
 
-	return computeHashSetFromPackedParts(r.ra, r.size, r.hasTrailer, r.Headers(), r.entries, version, gameType)
+	return computeHashSetFromPackedParts(r.rawReaderAt(), r.ra, r.size, r.trailerCandidate, r.Headers(), r.entries, version, gameType)
 }
 
-// computeHashSetFromPackedParts calculates hash set from packed metadata and ReaderAt.
+// computeHashSetFromPackedParts calculates hash set from archive and decoded payload readers.
 func computeHashSetFromPackedParts(
-	ra io.ReaderAt,
+	hashRA io.ReaderAt,
+	payloadRA io.ReaderAt,
 	size int64,
 	hasTrailer bool,
 	headers []HeaderPair,
@@ -65,19 +67,19 @@ func computeHashSetFromPackedParts(
 	gameType GameType,
 ) (HashSet, error) {
 	var hs HashSet
-	if ra == nil {
+	if hashRA == nil || payloadRA == nil {
 		return hs, ErrNilReader
 	}
 
 	prefix := pboPrefixFromHeaders(headers)
 
-	hash1, err := computeSignHash1(ra, size, hasTrailer)
+	hash1, err := computeSignHash1(hashRA, size, hasTrailer)
 	if err != nil {
 		return hs, fmt.Errorf("hash1: %w", err)
 	}
 
 	nameHash := computeSignNameHash(entries)
-	fileHash, err := computeSignFileHashFromReaderAt(ra, entries, version, gameType)
+	fileHash, err := computeSignFileHashFromReaderAt(payloadRA, entries, version, gameType)
 	if err != nil {
 		return hs, fmt.Errorf("filehash: %w", err)
 	}
@@ -104,17 +106,65 @@ func pboPrefixFromHeaders(headers []HeaderPair) string {
 
 // computeSignHash1 hashes full PBO content excluding optional 21-byte trailer.
 func computeSignHash1(ra io.ReaderAt, size int64, hasTrailer bool) ([]byte, error) {
-	toRead := size
+	h := sha1.New() //nolint:gosec // Signature format requires SHA1.
 	if hasTrailer && size >= 21 {
-		toRead = size - 21
+		var tail [21]byte
+		if _, err := ra.ReadAt(tail[:], size-21); err != nil {
+			return nil, fmt.Errorf("read trailer candidate: %w", err)
+		}
+
+		if tail[0] == 0 {
+			if _, err := io.Copy(h, io.NewSectionReader(ra, 0, size-21)); err != nil {
+				return nil, err
+			}
+
+			if bytes.Equal(h.Sum(nil), tail[1:]) {
+				return h.Sum(nil), nil
+			}
+
+			if _, err := h.Write(tail[:]); err != nil {
+				return nil, err
+			}
+
+			return h.Sum(nil), nil
+		}
 	}
 
-	h := sha1.New() //nolint:gosec // Signature format requires SHA1.
-	if _, err := io.Copy(h, io.NewSectionReader(ra, 0, toRead)); err != nil {
+	if _, err := io.Copy(h, io.NewSectionReader(ra, 0, size)); err != nil {
 		return nil, err
 	}
 
 	return h.Sum(nil), nil
+}
+
+// verifySHA1Trailer verifies the final 21-byte trailer without changing the source.
+func verifySHA1Trailer(ra io.ReaderAt, size int64) ([20]byte, bool, error) {
+	var digest [20]byte
+	if ra == nil {
+		return digest, false, ErrNilReader
+	}
+	if size < 21 {
+		return digest, false, nil
+	}
+
+	var tail [21]byte
+	if _, err := ra.ReadAt(tail[:], size-21); err != nil {
+		return digest, false, err
+	}
+	if tail[0] != 0 {
+		return digest, false, nil
+	}
+
+	h := sha1.New() //nolint:gosec // PBO trailer format requires SHA1.
+	if _, err := io.Copy(h, io.NewSectionReader(ra, 0, size-21)); err != nil {
+		return digest, false, err
+	}
+	if !bytes.Equal(h.Sum(nil), tail[1:]) {
+		return digest, false, nil
+	}
+
+	copy(digest[:], tail[1:])
+	return digest, true, nil
 }
 
 // computeHash1FromSections computes SHA1 over the full PBO content using in-memory sections.

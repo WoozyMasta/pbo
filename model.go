@@ -187,11 +187,26 @@ const (
 	OffsetModeStoredStrict OffsetMode = "stored_strict"
 )
 
+// TrailerMode controls how the optional 21-byte SHA1 trailer is interpreted.
+type TrailerMode string
+
+const (
+	// TrailerModeAuto detects a structurally plausible trailer and verifies sealed layouts.
+	TrailerModeAuto TrailerMode = "auto"
+	// TrailerModePresent forces the reader to treat the final 21 bytes as a trailer.
+	TrailerModePresent TrailerMode = "present"
+	// TrailerModeAbsent forces the reader to include all source bytes as archive content.
+	TrailerModeAbsent TrailerMode = "absent"
+)
+
 // ReaderOptions configures reader parse compatibility behavior.
 type ReaderOptions struct {
 	// SealedKey enables sealed archive decode when set.
 	// Nil keeps standard plain PBO read behavior.
 	SealedKey *SealedKey `json:"sealed_key,omitempty" yaml:"sealed_key,omitempty"`
+	// TrailerMode controls optional SHA1 trailer detection. Auto is the default;
+	// for sealed archives it verifies a zero-prefixed candidate to select the seed.
+	TrailerMode TrailerMode `json:"trailer_mode,omitempty" yaml:"trailer_mode,omitempty"`
 	// OffsetMode controls whether stored index offsets are used.
 	OffsetMode OffsetMode `json:"offset_mode,omitempty" yaml:"offset_mode,omitempty"`
 	// EntryPathPrefix keeps entries whose normalized path is equal to prefix or starts with "prefix/".
@@ -293,6 +308,9 @@ func (opts *PackOptions) applyDefaults() {
 func (opts *ReaderOptions) applyDefaults() {
 	if opts.OffsetMode == "" {
 		opts.OffsetMode = OffsetModeSequential
+	}
+	if opts.TrailerMode == "" {
+		opts.TrailerMode = TrailerModeAuto
 	}
 	opts.Limits.applyDefaults()
 }

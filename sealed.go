@@ -60,9 +60,12 @@ type sealedReaderAt struct {
 }
 
 // prepareReaderAtWithSealedOptions wraps source reader with on-demand sealed decode when enabled.
-func prepareReaderAtWithSealedOptions(ra io.ReaderAt, size int64, sealedKeyValue *SealedKey, limits ReaderLimits) (io.ReaderAt, error) {
+func prepareReaderAtWithSealedOptions(ra io.ReaderAt, size int64, sealedKeyValue *SealedKey, trailerMode TrailerMode, limits ReaderLimits) (io.ReaderAt, error) {
 	if ra == nil {
 		return nil, ErrNilReader
+	}
+	if err := validateTrailerMode(trailerMode); err != nil {
+		return nil, err
 	}
 
 	key := parseSealedKey(sealedKeyValue)
@@ -71,7 +74,7 @@ func prepareReaderAtWithSealedOptions(ra io.ReaderAt, size int64, sealedKeyValue
 		return ra, nil
 	}
 
-	layout, err := buildSealedLayoutWithLimits(ra, size, true, limits)
+	layout, err := buildSealedLayoutWithOptions(ra, size, trailerMode, limits)
 	if err != nil {
 		return nil, err
 	}
@@ -180,7 +183,12 @@ func applySealedTransformToReadWriteAt(
 		return nil
 	}
 
-	layout, err := buildSealedLayout(ra, size, detectTrailer)
+	trailerMode := TrailerModeAbsent
+	if detectTrailer {
+		trailerMode = TrailerModeAuto
+	}
+
+	layout, err := buildSealedLayoutWithOptions(ra, size, trailerMode, ReaderLimits{})
 	if err != nil {
 		return err
 	}
@@ -223,13 +231,8 @@ func parseSealedKey(value *SealedKey) sealedKey {
 	return key
 }
 
-// buildSealedLayout resolves transform region/seed from archive metadata.
-func buildSealedLayout(ra io.ReaderAt, size int64, detectTrailer bool) (sealedLayout, error) {
-	return buildSealedLayoutWithLimits(ra, size, detectTrailer, ReaderLimits{})
-}
-
-// buildSealedLayoutWithLimits resolves transform geometry using parser limits.
-func buildSealedLayoutWithLimits(ra io.ReaderAt, size int64, detectTrailer bool, limits ReaderLimits) (sealedLayout, error) {
+// buildSealedLayoutWithOptions resolves transform geometry and optional trailer policy.
+func buildSealedLayoutWithOptions(ra io.ReaderAt, size int64, trailerMode TrailerMode, limits ReaderLimits) (sealedLayout, error) {
 	var layout sealedLayout
 	if ra == nil {
 		return layout, ErrNilReader
@@ -239,17 +242,8 @@ func buildSealedLayoutWithLimits(ra io.ReaderAt, size int64, detectTrailer bool,
 		return layout, fmt.Errorf("%w: short header", ErrInvalidHeader)
 	}
 
-	transformSize := size
-	if detectTrailer {
-		if trailerSize, hasTrailer, err := detectSealedTrailerSize(ra, size); err != nil {
-			return layout, err
-		} else if hasTrailer {
-			transformSize -= trailerSize
-		}
-	}
-
-	if transformSize < headerSize || uint64(transformSize) > uint64(math.MaxUint32) {
-		return layout, ErrSizeOverflow
+	if err := validateTrailerMode(trailerMode); err != nil {
+		return layout, err
 	}
 
 	_, _, tableOffset, err := parseHeaderSection(ra, size, limits)
@@ -257,7 +251,7 @@ func buildSealedLayoutWithLimits(ra io.ReaderAt, size int64, detectTrailer bool,
 		return layout, err
 	}
 
-	if tableOffset < 0 || tableOffset > transformSize {
+	if tableOffset < 0 || tableOffset > size {
 		return layout, fmt.Errorf("%w: sealed header offset is out of range", ErrInvalidHeader)
 	}
 
@@ -265,30 +259,81 @@ func buildSealedLayoutWithLimits(ra io.ReaderAt, size int64, detectTrailer bool,
 		return layout, fmt.Errorf("%w: sealed header offset exceeds first transform block", ErrInvalidHeader)
 	}
 
-	layout.headerSkip = tableOffset
-	layout.transformSize = transformSize
-	seedValue, err := checkedInt64ToUint32(transformSize)
-	if err != nil {
-		return layout, err
+	makeLayout := func(transformSize int64) (sealedLayout, error) {
+		var result sealedLayout
+		if transformSize < headerSize || uint64(transformSize) > uint64(math.MaxUint32) {
+			return result, ErrSizeOverflow
+		}
+		if tableOffset > transformSize {
+			return result, fmt.Errorf("%w: sealed header offset is out of range", ErrInvalidHeader)
+		}
+
+		seedValue, err := checkedInt64ToUint32(transformSize)
+		if err != nil {
+			return result, err
+		}
+
+		result.headerSkip = tableOffset
+		result.transformSize = transformSize
+		result.seed = sealedSeed(seedValue)
+
+		return result, nil
 	}
 
-	layout.seed = sealedSeed(seedValue)
+	if trailerMode == TrailerModeAbsent {
+		return makeLayout(size)
+	}
 
-	return layout, nil
-}
-
-// detectSealedTrailerSize checks optional tail pattern used by SHA1 trailer.
-func detectSealedTrailerSize(ra io.ReaderAt, size int64) (int64, bool, error) {
 	if size < sealedTrailerSize {
-		return 0, false, nil
+		if trailerMode == TrailerModePresent {
+			return layout, ErrTrailerTooShort
+		}
+
+		return makeLayout(size)
 	}
 
 	var tail [sealedTrailerSize]byte
 	if _, err := ra.ReadAt(tail[:], size-sealedTrailerSize); err != nil {
-		return 0, false, fmt.Errorf("read trailer probe: %w", err)
+		return layout, fmt.Errorf("read trailer candidate: %w", err)
 	}
 
-	return sealedTrailerSize, tail[0] == 0x00, nil
+	if tail[0] != 0 {
+		if trailerMode == TrailerModePresent {
+			return layout, ErrInvalidTrailerPrefix
+		}
+
+		return makeLayout(size)
+	}
+
+	candidate, err := makeLayout(size - sealedTrailerSize)
+	if err != nil {
+		return layout, err
+	}
+	if trailerMode == TrailerModePresent {
+		return candidate, nil
+	}
+
+	verified, ok, err := verifySHA1Trailer(ra, size)
+	if err != nil {
+		return layout, fmt.Errorf("verify sealed trailer candidate: %w", err)
+	}
+
+	var stored [20]byte
+	copy(stored[:], tail[1:])
+	if ok && verified == stored {
+		return candidate, nil
+	}
+
+	return makeLayout(size)
+}
+
+// validateTrailerMode rejects unsupported optional-trailer policies.
+func validateTrailerMode(mode TrailerMode) error {
+	if mode == TrailerModeAuto || mode == TrailerModePresent || mode == TrailerModeAbsent {
+		return nil
+	}
+
+	return fmt.Errorf("%w: unknown trailer mode %q", ErrInvalidHeader, mode)
 }
 
 // applySealedTransformInPlace transforms archive bytes in place.
@@ -301,7 +346,7 @@ func applySealedTransformInPlace(data []byte, sealedKeyValue *SealedKey) error {
 		return nil
 	}
 
-	layout, err := buildSealedLayout(bytes.NewReader(data), int64(len(data)), true)
+	layout, err := buildSealedLayoutWithOptions(bytes.NewReader(data), int64(len(data)), TrailerModeAuto, ReaderLimits{})
 	if err != nil {
 		return err
 	}

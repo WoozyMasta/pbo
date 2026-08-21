@@ -2,10 +2,13 @@ package pbo
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha1" //nolint:gosec // Trailer format requires SHA1.
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"testing"
 )
 
 // checkSHA1TrailerForTest verifies that the file ends with a valid SHA1 trailer and that
@@ -54,4 +57,152 @@ func checkSHA1TrailerForTest(path string) ([20]byte, error) {
 	}
 
 	return stored, nil
+}
+
+func TestTrailerDetection_ZeroByteInNoTrailerPayload(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "no-trailer.pbo")
+	payload := make([]byte, 21)
+	if _, err := PackFile(context.Background(), path, []Input{{
+		Path: "zero.bin",
+		Open: func() (io.ReadCloser, error) {
+			return io.NopCloser(bytes.NewReader(payload)), nil
+		},
+	}}, PackOptions{}); err != nil {
+		t.Fatalf("PackFile: %v", err)
+	}
+
+	file, err := os.OpenFile(path, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	info, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		t.Fatalf("stat: %v", err)
+	}
+	bodySize := info.Size() - 21
+	if err := file.Truncate(bodySize); err != nil {
+		_ = file.Close()
+		t.Fatalf("truncate trailer: %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if body[len(body)-21] != 0 {
+		t.Fatalf("test fixture byte at size-21 = %#x, want 0", body[len(body)-21])
+	}
+
+	r, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = r.Close() }()
+	if _, ok := r.SHA1Trailer(); ok {
+		t.Fatal("SHA1Trailer() reported a trailer for payload data")
+	}
+
+	hashSet, err := computeHashSetFromReader(r, SignVersionV2, GameTypeArma)
+	if err != nil {
+		t.Fatalf("computeHashSetFromReader: %v", err)
+	}
+	want := sha1.Sum(body) //nolint:gosec // Test mirrors PBO trailer hashing.
+	if !bytes.Equal(hashSet.Hash1[:], want[:]) {
+		t.Fatalf("hash1 = %x, want full-file hash %x", hashSet.Hash1, want)
+	}
+}
+
+func TestTrailerDetection_InvalidDigestHashesWholeFile(t *testing.T) {
+	t.Parallel()
+
+	path := createMinimalPBO(t)
+	file, err := os.OpenFile(path, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	info, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		t.Fatalf("stat: %v", err)
+	}
+	if _, err := file.WriteAt([]byte{0x7f}, info.Size()-1); err != nil {
+		_ = file.Close()
+		t.Fatalf("corrupt trailer digest: %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	r, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = r.Close() }()
+	if _, ok := r.SHA1Trailer(); ok {
+		t.Fatal("SHA1Trailer() accepted an invalid digest")
+	}
+
+	hashSet, err := computeHashSetFromReader(r, SignVersionV2, GameTypeArma)
+	if err != nil {
+		t.Fatalf("computeHashSetFromReader: %v", err)
+	}
+	want := sha1.Sum(data) //nolint:gosec // Test mirrors PBO trailer hashing.
+	if !bytes.Equal(hashSet.Hash1[:], want[:]) {
+		t.Fatalf("hash1 = %x, want full-file hash %x", hashSet.Hash1, want)
+	}
+}
+
+func TestOpen_TrailerDetectionDoesNotHashPayload(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "large-payload.pbo")
+	payload := make([]byte, 4<<20)
+	if _, err := PackFile(context.Background(), path, []Input{{
+		Path: "payload.bin",
+		Open: func() (io.ReadCloser, error) {
+			return io.NopCloser(bytes.NewReader(payload)), nil
+		},
+	}}, PackOptions{}); err != nil {
+		t.Fatalf("PackFile: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	counted := &byteCountingReaderAt{reader: bytes.NewReader(data)}
+	r, err := NewReaderFromReaderAt(counted, int64(len(data)))
+	if err != nil {
+		t.Fatalf("NewReaderFromReaderAt: %v", err)
+	}
+	_ = r.Close()
+	t.Logf("reader consumed %d of %d archive bytes during Open", counted.bytesRead, len(data))
+	if counted.bytesRead >= int64(len(data))/2 {
+		t.Fatalf("Open read %d bytes from a %d-byte PBO; trailer detection must not hash payload", counted.bytesRead, len(data))
+	}
+}
+
+// byteCountingReaderAt records total bytes read by ReaderAt calls.
+type byteCountingReaderAt struct {
+	// reader is the underlying random-access source.
+	reader io.ReaderAt
+	// bytesRead is the cumulative number of returned bytes.
+	bytesRead int64
+}
+
+// ReadAt delegates the read and records its successful byte count.
+func (r *byteCountingReaderAt) ReadAt(p []byte, off int64) (int, error) {
+	n, err := r.reader.ReadAt(p, off)
+	r.bytesRead += int64(n)
+	return n, err
 }

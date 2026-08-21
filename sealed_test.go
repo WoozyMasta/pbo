@@ -77,6 +77,17 @@ func TestPackFileAndOpenWithOptions_SealedKeyRoundTrip(t *testing.T) {
 	if len(entries) != 2 {
 		t.Fatalf("len(entries)=%d, want 2", len(entries))
 	}
+	trailer, ok := r.SHA1Trailer()
+	if !ok {
+		t.Fatal("SHA1Trailer() did not verify the sealed archive trailer")
+	}
+	hashSet, err := computeHashSetFromReader(r, SignVersionV2, GameTypeArma)
+	if err != nil {
+		t.Fatalf("computeHashSetFromReader: %v", err)
+	}
+	if hashSet.Hash1 != trailer {
+		t.Fatalf("sealed hash1 = %x, want trailer digest %x", hashSet.Hash1, trailer)
+	}
 
 	data, err := r.ReadEntry("config.cpp")
 	if err != nil {
@@ -94,6 +105,62 @@ func TestPackFileAndOpenWithOptions_SealedKeyRoundTrip(t *testing.T) {
 	if len(listed) != 2 {
 		t.Fatalf("len(listed)=%d, want 2", len(listed))
 	}
+
+	forced, err := OpenWithOptions(sealedPath, ReaderOptions{
+		SealedKey:   &key,
+		TrailerMode: TrailerModePresent,
+	})
+	if err != nil {
+		t.Fatalf("OpenWithOptions forced trailer: %v", err)
+	}
+	_ = forced.Close()
+}
+
+func TestSealedTrailerDetection_NoTrailerZeroCandidate(t *testing.T) {
+	t.Parallel()
+
+	key := sealedTestKey()
+	path := filepath.Join(t.TempDir(), "sealed-no-trailer.pbo")
+	payload := bytes.Repeat([]byte{0x42}, 128)
+	if _, err := PackFile(context.Background(), path, []Input{{
+		Path: "payload.bin",
+		Open: func() (io.ReadCloser, error) {
+			return io.NopCloser(bytes.NewReader(payload)), nil
+		},
+	}}, PackOptions{SealedKey: &key}); err != nil {
+		t.Fatalf("PackFile: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	body := data[:len(data)-sealedTrailerSize]
+	body[len(body)-sealedTrailerSize] = 0
+	if err := os.WriteFile(path, body, 0o600); err != nil {
+		t.Fatalf("write no-trailer fixture: %v", err)
+	}
+
+	r, err := OpenWithOptions(path, ReaderOptions{SealedKey: &key})
+	if err != nil {
+		t.Fatalf("OpenWithOptions auto trailer: %v", err)
+	}
+	if entries := r.Entries(); len(entries) != 1 || entries[0].Path != "payload.bin" {
+		_ = r.Close()
+		t.Fatalf("Entries() = %#v, want payload.bin", entries)
+	}
+	if err := r.Close(); err != nil {
+		t.Fatalf("Close auto reader: %v", err)
+	}
+
+	r, err = OpenWithOptions(path, ReaderOptions{
+		SealedKey:   &key,
+		TrailerMode: TrailerModeAbsent,
+	})
+	if err != nil {
+		t.Fatalf("OpenWithOptions forced absent: %v", err)
+	}
+	_ = r.Close()
 }
 
 func TestSealedKey_NilIsNoop(t *testing.T) {
