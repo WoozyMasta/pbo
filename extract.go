@@ -6,6 +6,7 @@ package pbo
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -79,6 +80,12 @@ func (r *Reader) Extract(ctx context.Context, dstDir string, opts ExtractOptions
 		return fmt.Errorf("create output dir: %w", err)
 	}
 
+	root, err := os.OpenRoot(dstRootAbs)
+	if err != nil {
+		return fmt.Errorf("open output root: %w", err)
+	}
+	defer func() { _ = root.Close() }()
+
 	workItems, err := prepareExtractWorkItems(entries)
 	if err != nil {
 		return err
@@ -88,7 +95,7 @@ func (r *Reader) Extract(ctx context.Context, dstDir string, opts ExtractOptions
 		return nil
 	}
 
-	if err := prepareExtractDirs(dstRootAbs, workItems); err != nil {
+	if err := prepareExtractDirs(root, workItems); err != nil {
 		return err
 	}
 
@@ -123,7 +130,7 @@ func (r *Reader) Extract(ctx context.Context, dstDir string, opts ExtractOptions
 		wg.Go(func() {
 			copyBuf := make([]byte, extractCopyBufferSize)
 			for task := range taskCh {
-				err := r.extractPreparedEntry(ctx, dstRootAbs, task, fileMode, copyBuf, opts.OnEntryDone)
+				err := r.extractPreparedEntry(ctx, root, dstRootAbs, task, fileMode, copyBuf, opts.OnEntryDone)
 				if err == nil {
 					continue
 				}
@@ -190,7 +197,14 @@ func prepareExtractWorkItems(entries []EntryInfo) ([]extractWorkItem, error) {
 			return nil, fmt.Errorf("normalize entry path %s: %w", entry.Path, err)
 		}
 
-		relPath := filepath.FromSlash(normalizedPath)
+		relPath, err := filepath.Localize(normalizedPath)
+		if err != nil {
+			return nil, fmt.Errorf("localize entry path %s: %w: %w", entry.Path, ErrInvalidExtractPath, err)
+		}
+		if !filepath.IsLocal(relPath) {
+			return nil, fmt.Errorf("entry path %s: %w", entry.Path, ErrExtractPathOutsideRoot)
+		}
+
 		relDir := filepath.Dir(relPath)
 		if relDir == "." || relDir == "" {
 			relDir = ""
@@ -207,22 +221,20 @@ func prepareExtractWorkItems(entries []EntryInfo) ([]extractWorkItem, error) {
 }
 
 // prepareExtractDirs creates all unique parent directories needed by work items.
-func prepareExtractDirs(dstRootAbs string, workItems []extractWorkItem) error {
+func prepareExtractDirs(root *os.Root, workItems []extractWorkItem) error {
 	seen := make(map[string]struct{}, len(workItems))
 	for _, task := range workItems {
 		if task.relDir == "" {
 			continue
 		}
 
-		dirPath := filepath.Join(dstRootAbs, task.relDir)
-		key := strings.ToLower(dirPath)
-		if _, exists := seen[key]; exists {
+		if _, exists := seen[task.relDir]; exists {
 			continue
 		}
 
-		seen[key] = struct{}{}
-		if err := os.MkdirAll(dirPath, 0o750); err != nil {
-			return fmt.Errorf("create output directory %s: %w", dirPath, err)
+		seen[task.relDir] = struct{}{}
+		if err := root.MkdirAll(task.relDir, 0o750); err != nil {
+			return fmt.Errorf("create output directory %s: %w", task.relDir, err)
 		}
 	}
 
@@ -232,6 +244,7 @@ func prepareExtractDirs(dstRootAbs string, workItems []extractWorkItem) error {
 // extractPreparedEntry writes one prepared work item to destination root.
 func (r *Reader) extractPreparedEntry(
 	ctx context.Context,
+	root *os.Root,
 	dstRootAbs string,
 	task extractWorkItem,
 	fileMode ExtractFileMode,
@@ -251,7 +264,7 @@ func (r *Reader) extractPreparedEntry(
 		expectedSize = int64(task.entry.OriginalSize)
 	}
 
-	file, needsTruncate, err := openExtractFile(outPath, fileMode, expectedSize)
+	file, needsTruncate, err := openExtractFile(root, task.relPath, fileMode, expectedSize)
 	if err != nil {
 		return fmt.Errorf("open %s: %w", task.entry.Path, err)
 	}
@@ -281,22 +294,23 @@ func (r *Reader) extractPreparedEntry(
 }
 
 // openExtractFile opens output path according to selected extract file mode.
-func openExtractFile(path string, mode ExtractFileMode, expectedSize int64) (*os.File, bool, error) {
+func openExtractFile(root *os.Root, path string, mode ExtractFileMode, expectedSize int64) (*os.File, bool, error) {
 	switch mode {
 	case ExtractFileModeAuto:
-		file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		file, err := root.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 		if err == nil {
 			return file, false, nil
 		}
 
-		if !os.IsExist(err) {
+		if !errors.Is(err, os.ErrExist) {
 			return nil, false, err
 		}
 
-		file, truncErr := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+		file, truncErr := root.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 		return file, false, truncErr
+
 	case ExtractFileModeOverwriteSmart:
-		file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE, 0o600)
+		file, err := root.OpenFile(path, os.O_WRONLY|os.O_CREATE, 0o600)
 		if err != nil {
 			return nil, false, err
 		}
@@ -309,12 +323,15 @@ func openExtractFile(path string, mode ExtractFileMode, expectedSize int64) (*os
 
 		needsTruncate := info.Size() > expectedSize
 		return file, needsTruncate, nil
+
 	case ExtractFileModeTruncate:
-		file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+		file, err := root.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 		return file, false, err
+
 	case ExtractFileModeCreateOnly:
-		file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		file, err := root.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 		return file, false, err
+
 	default:
 		return nil, false, fmt.Errorf("unknown extract file mode %q", mode)
 	}
@@ -344,8 +361,10 @@ func normalizeExtractEntryPath(entryPath string) (string, error) {
 		switch part {
 		case "", ".":
 			continue
+
 		case "..":
 			return "", ErrInvalidExtractPath
+
 		default:
 			cleanParts = append(cleanParts, part)
 		}

@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning][].
 
 ### Changed
 
+* Extraction now confines directory and file access to `os.Root`,
+  preventing archive paths and symlinks from escaping the destination.
 * Reader parsing now applies configurable limits
   to header fields, properties, entry names and index records.
   Entry metadata preallocation no longer scales with total archive size.
