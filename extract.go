@@ -40,14 +40,6 @@ func (r *Reader) Extract(ctx context.Context, dstDir string, opts ExtractOptions
 		return ErrClosed
 	}
 
-	workers := opts.MaxWorkers
-	if workers <= 0 {
-		workers = runtime.GOMAXPROCS(0)
-	}
-	if workers < 1 {
-		workers = 1
-	}
-
 	entries := r.entries
 	if opts.Entries != nil {
 		entries = opts.Entries
@@ -90,23 +82,17 @@ func (r *Reader) Extract(ctx context.Context, dstDir string, opts ExtractOptions
 	if err != nil {
 		return err
 	}
-
 	if len(workItems) == 0 {
 		return nil
 	}
 
+	workers := extractWorkerCount(opts.MaxWorkers, len(workItems))
 	if err := prepareExtractDirs(root, workItems); err != nil {
 		return err
 	}
 
 	taskBufferSize := max(workers*2, 1)
-
 	taskCh := make(chan extractWorkItem, taskBufferSize)
-	var errCh chan error
-	if opts.ContinueOnError {
-		errCh = make(chan error, len(workItems))
-	}
-
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -126,7 +112,7 @@ func (r *Reader) Extract(ctx context.Context, dstDir string, opts ExtractOptions
 	}
 
 	var wg sync.WaitGroup
-	for w := 0; w < workers; w++ {
+	for range workers {
 		wg.Go(func() {
 			copyBuf := make([]byte, extractCopyBufferSize)
 			for task := range taskCh {
@@ -135,18 +121,10 @@ func (r *Reader) Extract(ctx context.Context, dstDir string, opts ExtractOptions
 					continue
 				}
 
+				storeFirstErr(err)
 				if !opts.ContinueOnError {
-					storeFirstErr(err)
 					cancel()
 					return
-				}
-
-				if errCh != nil {
-					select {
-					case errCh <- err:
-					case <-ctx.Done():
-						return
-					}
 				}
 			}
 		})
@@ -163,15 +141,6 @@ enqueueLoop:
 
 	close(taskCh)
 	wg.Wait()
-	if errCh != nil {
-		close(errCh)
-	}
-
-	if errCh != nil {
-		for err := range errCh {
-			storeFirstErr(err)
-		}
-	}
 
 	if firstErr != nil {
 		return firstErr
@@ -182,6 +151,25 @@ enqueueLoop:
 	}
 
 	return nil
+}
+
+// extractWorkerCount bounds requested concurrency by the number of work items.
+func extractWorkerCount(requested int, workItemCount int) int {
+	if workItemCount <= 0 {
+		return 0
+	}
+
+	if requested <= 0 {
+		requested = runtime.GOMAXPROCS(0)
+	}
+	if requested < 1 {
+		requested = 1
+	}
+	if requested > workItemCount {
+		requested = workItemCount
+	}
+
+	return requested
 }
 
 // prepareExtractWorkItems validates selected entries and prepares relative fs paths.

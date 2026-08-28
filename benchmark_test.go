@@ -13,6 +13,7 @@ import (
 const (
 	benchDefaultEntries    = 128
 	benchLargeIndexEntries = 52536
+	benchManySmallEntries  = 4096
 )
 
 var (
@@ -80,6 +81,38 @@ func BenchmarkExtract(b *testing.B) {
 
 func BenchmarkExtractSanitize(b *testing.B) {
 	benchmarkExtractWithSanitize(b, true)
+}
+
+func BenchmarkExtractManySmall(b *testing.B) {
+	path := createBenchPBO(b, benchManySmallEntries)
+	r, err := Open(path)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer func() { _ = r.Close() }()
+
+	for _, continueOnError := range []bool{false, true} {
+		name := "fail_fast"
+		if continueOnError {
+			name = "continue_on_error"
+		}
+		b.Run(name, func(b *testing.B) {
+			dir := b.TempDir()
+			opts := ExtractOptions{
+				MaxWorkers:      4,
+				ContinueOnError: continueOnError,
+			}
+
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				out := filepath.Join(dir, fmt.Sprintf("run%d", i))
+				if err := r.Extract(context.Background(), out, opts); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
 }
 
 func BenchmarkListLargeIndex(b *testing.B) {

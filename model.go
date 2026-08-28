@@ -247,13 +247,14 @@ type ReaderLimits struct {
 
 // ExtractOptions configures Extract behavior.
 type ExtractOptions struct {
-	// OnEntryDone is called after one entry is fully written to disk.
+	// OnEntryDone is called after one entry is written successfully to disk.
 	OnEntryDone func(entry EntryInfo, written int64, outputPath string) `json:"-" yaml:"-"`
 	// FileMode controls output file creation policy.
 	FileMode ExtractFileMode `json:"file_mode,omitempty" yaml:"file_mode,omitempty"`
 	// Entries limits extraction to selected metadata list; nil means all parsed entries.
 	Entries []EntryInfo `json:"-" yaml:"-"`
-	// MaxWorkers is number of extraction workers (zero means GOMAXPROCS).
+	// MaxWorkers is the maximum number of extraction workers; zero means GOMAXPROCS.
+	// The actual worker count is limited by the number of selected entries.
 	MaxWorkers int `json:"max_workers,omitempty" yaml:"max_workers,omitempty"`
 	// ContinueOnError keeps extraction running when one or more entries fail.
 	// Default false is fail-fast mode.

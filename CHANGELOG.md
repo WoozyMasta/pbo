@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning][].
 
 ### Changed
 
+* Extraction limits workers to selected entries
+  and no longer allocates an error channel proportional to entry count.
 * Extraction now confines directory and file access to `os.Root`,
   preventing archive paths and symlinks from escaping the destination.
 * Reader parsing now applies configurable limits
