@@ -177,6 +177,115 @@ func TestSealedKey_NilIsNoop(t *testing.T) {
 	}
 }
 
+func TestSealedTransformBatched_MatchesSegmentTransformAndRoundTrips(t *testing.T) {
+	t.Parallel()
+
+	basePath := filepath.Join(t.TempDir(), "base.pbo")
+	if _, err := PackFile(context.Background(), basePath, []Input{{
+		Path: "payload.bin",
+		Open: func() (io.ReadCloser, error) {
+			return io.NopCloser(bytes.NewReader([]byte("payload"))), nil
+		},
+	}}, PackOptions{}); err != nil {
+		t.Fatalf("PackFile: %v", err)
+	}
+	base, err := os.ReadFile(basePath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+
+	key := sealedTestKey()
+	for _, size := range []int{
+		sealedBlockSize - 1,
+		sealedBlockSize,
+		sealedBlockSize + 1,
+		sealedIOBatchSize - 1,
+		sealedIOBatchSize,
+		sealedIOBatchSize + 1,
+		2*sealedIOBatchSize - 1,
+		2 * sealedIOBatchSize,
+		2*sealedIOBatchSize + 1,
+	} {
+		t.Run(fmt.Sprintf("size_%d", size), func(t *testing.T) {
+			original := make([]byte, size)
+			copy(original, base)
+			for i := len(base); i < len(original); i++ {
+				original[i] = byte(i * 31)
+			}
+
+			want := append([]byte(nil), original...)
+			if err := applySealedTransformBySegments(want, &key); err != nil {
+				t.Fatalf("reference transform: %v", err)
+			}
+
+			got := append([]byte(nil), original...)
+			if err := applySealedTransformToReadWriteAt(
+				bytes.NewReader(original), testWriterAt{data: got}, int64(len(got)), &key, false,
+			); err != nil {
+				t.Fatalf("batched transform: %v", err)
+			}
+			if !bytes.Equal(got, want) {
+				t.Fatal("batched transform differs from segment reference")
+			}
+
+			if err := applySealedTransformToReadWriteAt(
+				bytes.NewReader(got), testWriterAt{data: got}, int64(len(got)), &key, false,
+			); err != nil {
+				t.Fatalf("second batched transform: %v", err)
+			}
+			if !bytes.Equal(got, original) {
+				t.Fatal("double transform did not restore original bytes")
+			}
+		})
+	}
+}
+
+// applySealedTransformBySegments preserves the pre-batching algorithm for byte-level comparison.
+func applySealedTransformBySegments(data []byte, keyValue *SealedKey) error {
+	key := parseSealedKey(keyValue)
+	layout, err := buildSealedLayoutWithOptions(bytes.NewReader(data), int64(len(data)), TrailerModeAbsent, ReaderLimits{})
+	if err != nil {
+		return err
+	}
+
+	transformSegment := func(segmentStart int64, segmentEnd int64, streamPos uint32) {
+		segment := data[int(segmentStart):int(segmentEnd)]
+		state := newSealedRC4StateForStreamPos(key, layout.seed, streamPos)
+		state.swapIndices()
+		state.apply(segment)
+	}
+
+	firstEnd := minInt64(sealedBlockSize, layout.transformSize)
+	if layout.headerSkip < firstEnd {
+		transformSegment(layout.headerSkip, firstEnd, 0)
+	}
+	for segmentStart := int64(sealedBlockSize); segmentStart < layout.transformSize; segmentStart += sealedBlockSize {
+		segmentEnd := minInt64(segmentStart+sealedBlockSize, layout.transformSize)
+		streamPos, err := checkedInt64ToUint32(segmentStart)
+		if err != nil {
+			return err
+		}
+
+		transformSegment(segmentStart, segmentEnd, streamPos)
+	}
+
+	return nil
+}
+
+// testWriterAt updates the byte slice used by sealed transform tests.
+type testWriterAt struct {
+	data []byte
+}
+
+// WriteAt copies bytes into the test buffer at the requested offset.
+func (w testWriterAt) WriteAt(p []byte, off int64) (int, error) {
+	if off < 0 || off+int64(len(p)) > int64(len(w.data)) {
+		return 0, io.ErrShortWrite
+	}
+
+	return copy(w.data[int(off):], p), nil
+}
+
 func TestEditorCommit_SealedKeyRoundTrip(t *testing.T) {
 	t.Parallel()
 

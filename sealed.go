@@ -15,6 +15,8 @@ import (
 const (
 	// sealedBlockSize is a fixed transform block size.
 	sealedBlockSize = 0x1000
+	// sealedIOBatchSize bounds buffered I/O while combining transform blocks.
+	sealedIOBatchSize = 1 << 20
 	// sealedKeySize is a fixed sealed key size in bytes.
 	sealedKeySize = 16
 	// sealedTrailerSize is size of optional SHA1 trailer (0x00 + sha1).
@@ -193,26 +195,39 @@ func applySealedTransformToReadWriteAt(
 		return err
 	}
 
-	var segment [sealedBlockSize]byte
-	err = forEachSealedSegment(layout, func(segmentStart int64, segmentEnd int64, streamPos uint32) error {
-		n := int(segmentEnd - segmentStart)
-		buf := segment[:n]
-		if err := readFullAt(ra, buf, segmentStart); err != nil {
-			return fmt.Errorf("read sealed segment: %w", err)
-		}
-
-		state := newSealedRC4StateForStreamPos(key, layout.seed, streamPos)
-		state.swapIndices()
-		state.apply(buf)
-
-		if err := writeFullAt(wa, buf, segmentStart); err != nil {
-			return fmt.Errorf("write sealed segment: %w", err)
-		}
-
+	bufferSize := minInt64(sealedIOBatchSize, layout.transformSize-layout.headerSkip)
+	if bufferSize <= 0 {
 		return nil
-	})
-	if err != nil {
-		return err
+	}
+
+	buffer := make([]byte, int(bufferSize))
+	for batchStart := layout.headerSkip; batchStart < layout.transformSize; {
+		batchEnd := minInt64(
+			((batchStart/sealedIOBatchSize)+1)*sealedIOBatchSize,
+			layout.transformSize,
+		)
+		batch := buffer[:int(batchEnd-batchStart)]
+		if err := readFullAt(ra, batch, batchStart); err != nil {
+			return fmt.Errorf("read sealed batch: %w", err)
+		}
+
+		for pos := batchStart; pos < batchEnd; {
+			_, segmentEnd, streamPos := sealedSegmentAt(layout, pos)
+			segmentEnd = minInt64(segmentEnd, batchEnd)
+			segment := batch[int(pos-batchStart):int(segmentEnd-batchStart)]
+
+			state := newSealedRC4StateForStreamPos(key, layout.seed, streamPos)
+			state.swapIndices()
+			state.apply(segment)
+
+			pos = segmentEnd
+		}
+
+		if err := writeFullAt(wa, batch, batchStart); err != nil {
+			return fmt.Errorf("write sealed batch: %w", err)
+		}
+
+		batchStart = batchEnd
 	}
 
 	return nil
@@ -385,37 +400,6 @@ func applySealedRangeInPlace(data []byte, offset int64, layout sealedLayout, key
 
 		cur = segmentEnd
 	}
-}
-
-// forEachSealedSegment iterates transform segments in file order.
-func forEachSealedSegment(layout sealedLayout, fn func(segmentStart int64, segmentEnd int64, streamPos uint32) error) error {
-	if layout.transformSize <= layout.headerSkip {
-		return nil
-	}
-
-	firstEnd := minInt64(sealedBlockSize, layout.transformSize)
-	if layout.headerSkip < firstEnd {
-		if err := fn(layout.headerSkip, firstEnd, 0); err != nil {
-			return err
-		}
-	}
-
-	segmentStart := int64(sealedBlockSize)
-	for segmentStart < layout.transformSize {
-		segmentEnd := min(segmentStart+sealedBlockSize, layout.transformSize)
-		streamPos, err := checkedInt64ToUint32(segmentStart)
-		if err != nil {
-			return err
-		}
-
-		if err := fn(segmentStart, segmentEnd, streamPos); err != nil {
-			return err
-		}
-
-		segmentStart += sealedBlockSize
-	}
-
-	return nil
 }
 
 // sealedSegmentAt resolves transform segment boundaries for a file offset.

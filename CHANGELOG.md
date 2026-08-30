@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning][].
   and `SHA1Trailer()` returns only a digest that verifies against the archive.
   `ReaderOptions.TrailerMode` can force trailer presence or absence;
   sealed auto-detection verifies a candidate digest before choosing its seed.
+* Sealed transforms batch 4 KiB segments into bounded 1 MiB I/O operations.
 
 ## [0.3.0][] - 2026-07-01
 
@@ -135,6 +136,5 @@ and this project adheres to [Semantic Versioning][].
 [0.1.0]: https://github.com/WoozyMasta/pbo/v0.1.0
 
 <!--links-->
-[Unreleased]: https://github.com/WoozyMasta/pbo/compare/v0.3.0...HEAD
 [Keep a Changelog]: https://keepachangelog.com/en/1.1.0/
 [Semantic Versioning]: https://semver.org/spec/v2.0.0.html
