@@ -16,8 +16,14 @@ and this project adheres to [Semantic Versioning][].
 
 ## Unreleased
 
+### Added
+
+* Reader and pack options expose generic and typed PBO property accessors.
+
 ### Changed
 
+* Writer rejects malformed NUL-terminated fields
+  before output or file truncation.
 * Extraction limits workers to selected entries
   and no longer allocates an error channel proportional to entry count.
 * Extraction now confines directory and file access to `os.Root`,

@@ -96,12 +96,9 @@ func computeHashSetFromPackedParts(
 
 // pboPrefixFromHeaders extracts the "prefix" header value from PBO metadata.
 func pboPrefixFromHeaders(headers []HeaderPair) string {
-	for _, h := range headers {
-		if strings.EqualFold(h.Key, "prefix") {
-			return h.Value
-		}
-	}
-	return ""
+	prefix, _ := propertyValue(headers, PropertyPrefix)
+
+	return prefix
 }
 
 // computeSignHash1 hashes full PBO content excluding optional 21-byte trailer.

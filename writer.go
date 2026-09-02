@@ -126,6 +126,14 @@ func PackFile(ctx context.Context, outPath string, inputs []Input, opts PackOpti
 	if len(inputs) == 0 {
 		return nil, ErrEmptyInputs
 	}
+	opts.applyDefaults()
+	rewritePlan, err := preparePackRewritePlan(inputs)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateHeaderProperties(opts.Headers); err != nil {
+		return nil, err
+	}
 
 	f, err := os.OpenFile(outPath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
@@ -136,12 +144,6 @@ func PackFile(ctx context.Context, outPath string, inputs []Input, opts PackOpti
 			_ = f.Close()
 		}
 	}()
-
-	opts.applyDefaults()
-	rewritePlan, err := preparePackRewritePlan(inputs)
-	if err != nil {
-		return nil, err
-	}
 
 	details, err := rewriteArchiveDetailed(ctx, f, nil, rewritePlan, opts)
 	if err != nil {
@@ -261,8 +263,16 @@ func PackAndHashFile(
 	if len(inputs) == 0 {
 		return nil, hs, ErrEmptyInputs
 	}
-
 	if err := validateSignHashArgs(signVersion, gameType); err != nil {
+		return nil, hs, err
+	}
+
+	opts.applyDefaults()
+	rewritePlan, err := preparePackRewritePlan(inputs)
+	if err != nil {
+		return nil, hs, err
+	}
+	if err := validateHeaderProperties(opts.Headers); err != nil {
 		return nil, hs, err
 	}
 
@@ -276,13 +286,8 @@ func PackAndHashFile(
 		}
 	}()
 
-	opts.applyDefaults()
 	opts.signHashVersion = signVersion
 	opts.signHashGameType = gameType
-	rewritePlan, err := preparePackRewritePlan(inputs)
-	if err != nil {
-		return nil, hs, err
-	}
 
 	details, err := rewriteArchiveDetailed(ctx, f, nil, rewritePlan, opts)
 	if err != nil {
@@ -368,6 +373,9 @@ func preparePackRewritePlan(inputs []Input) ([]rewriteEntry, error) {
 		if err != nil {
 			return nil, err
 		}
+		if err := validateEntryPathWire(normalizedPath); err != nil {
+			return nil, fmt.Errorf("input %d: %w", i, err)
+		}
 
 		sorted[i].Path = normalizedPath
 	}
@@ -389,6 +397,30 @@ func preparePackRewritePlan(inputs []Input) ([]rewriteEntry, error) {
 	}
 
 	return rewritePlan, nil
+}
+
+// validateRewritePlanPaths rejects paths that cannot be encoded as bounded
+// NUL-terminated fields.
+func validateRewritePlanPaths(rewritePlan []rewriteEntry) error {
+	for i, item := range rewritePlan {
+		if err := validateEntryPathWire(item.path); err != nil {
+			return fmt.Errorf("entry %d: %w", i, err)
+		}
+	}
+
+	return nil
+}
+
+// validateEntryPathWire enforces the path constraints of the PBO index format.
+func validateEntryPathWire(path string) error {
+	if strings.IndexByte(path, 0) >= 0 {
+		return fmt.Errorf("%w: path contains NUL", ErrInvalidEntryPath)
+	}
+	if len(path) > maxNameLen {
+		return ErrFileNameTooLong
+	}
+
+	return nil
 }
 
 // openInputReader opens source stream for one input.
@@ -457,6 +489,12 @@ func rewriteArchiveDetailed(
 	}
 
 	opts.applyDefaults()
+	if err := validateHeaderProperties(opts.Headers); err != nil {
+		return nil, err
+	}
+	if err := validateRewritePlanPaths(rewritePlan); err != nil {
+		return nil, err
+	}
 
 	compressMatcher, err := newCompressMatcher(opts.Compress, opts.CompressMatcherOptions)
 	if err != nil {
@@ -476,7 +514,7 @@ func rewriteArchiveDetailed(
 	for _, h := range opts.Headers {
 		key := h.Key
 		value := h.Value
-		if strings.EqualFold(strings.TrimSpace(key), "prefix") {
+		if propertyKeyEqual(key, PropertyPrefix) {
 			value = NormalizePrefixHeader(value)
 		}
 

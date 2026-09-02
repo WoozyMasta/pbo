@@ -10,6 +10,8 @@ import "errors"
 var (
 	// ErrInvalidHeader means the PBO file is missing or has a bad header.
 	ErrInvalidHeader = errors.New("invalid PBO file: missing or bad header")
+	// ErrInvalidHeaderProperty means a header property cannot be represented on the wire.
+	ErrInvalidHeaderProperty = errors.New("invalid PBO header property")
 	// ErrFileNameTooLong means the entry filename exceeds the maximum length.
 	ErrFileNameTooLong = errors.New("entry filename exceeds maximum length")
 	// ErrNilReader means the reader is nil.
