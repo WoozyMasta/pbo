@@ -42,9 +42,16 @@ For metadata-only scans, use fast helpers without creating a full reader:
 	}
 	_, _ = headers, entries
 
-For filesystem-safe listing names:
+For filesystem-safe listing names or filtered views, keep raw archive identity
+and derive a separate presentation view:
 
-	entries, err := pbo.ListEntriesWithOptions("addon.pbo", pbo.ReaderOptions{
+	r, err := pbo.Open("addon.pbo")
+	if err != nil {
+	    return err
+	}
+	defer r.Close()
+	entries, err := r.EntriesWithOptions(pbo.EntryViewOptions{
+	    PathPrefix:   "scripts/4_world",
 	    SanitizeNames: true,
 	})
 	if err != nil {
@@ -54,18 +61,21 @@ For filesystem-safe listing names:
 
 For noisy or obfuscated archives, combine entry filters:
 
-	r, err := pbo.OpenWithOptions("addon.pbo", pbo.ReaderOptions{
-	    MinEntryOriginalSize: 12,
-	    MinEntryDataSize:     0,
-	    EntryPathPrefix:      "scripts/4_world",
-	    FilterASCIIOnly:      false,
+	r, err := pbo.Open("addon.pbo")
+	if err != nil {
+	    return err
+	}
+	defer r.Close()
+	entries, err := r.EntriesWithOptions(pbo.EntryViewOptions{
+	    MinOriginalSize:      12,
+	    PathPrefix:           "scripts/4_world",
 	    SanitizeControlChars: true,
 	    SanitizeNames:        true,
 	})
 	if err != nil {
 	    return err
 	}
-	defer r.Close()
+	_ = entries
 
 For archives with meaningful non-zero index offsets, use compatibility mode:
 

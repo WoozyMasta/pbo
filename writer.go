@@ -1244,8 +1244,7 @@ func checkedDataSize(path string, size int64, currentOffset uint32) (uint32, err
 func validateUniqueEntryPaths(inputs []Input) error {
 	seen := make(map[string]string, len(inputs))
 	for _, in := range inputs {
-		// asciiLower avoids allocation when path is already lowercase (common case).
-		key := asciiLower(in.Path)
+		key := archiveLookupKey(in.Path)
 		if existing, ok := seen[key]; ok {
 			return fmt.Errorf("%w: %q conflicts with %q", ErrDuplicateEntryPath, in.Path, existing)
 		}

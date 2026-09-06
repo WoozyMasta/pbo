@@ -58,7 +58,7 @@ type HashSet struct {
 
 // EntryInfo describes a single parsed PBO entry.
 type EntryInfo struct {
-	// Path is the entry path as stored in archive index.
+	// Path is the raw archive path, or its rewritten value in a derived entry view.
 	Path string `json:"path" yaml:"path"`
 	// Offset is byte offset of entry payload.
 	Offset uint32 `json:"offset" yaml:"offset"`
@@ -199,7 +199,7 @@ const (
 	TrailerModeAbsent TrailerMode = "absent"
 )
 
-// ReaderOptions configures reader parse compatibility behavior.
+// ReaderOptions configures archive decoding and format interpretation.
 type ReaderOptions struct {
 	// SealedKey enables sealed archive decode when set.
 	// Nil keeps standard plain PBO read behavior.
@@ -209,23 +209,8 @@ type ReaderOptions struct {
 	TrailerMode TrailerMode `json:"trailer_mode,omitempty" yaml:"trailer_mode,omitempty"`
 	// OffsetMode controls whether stored index offsets are used.
 	OffsetMode OffsetMode `json:"offset_mode,omitempty" yaml:"offset_mode,omitempty"`
-	// EntryPathPrefix keeps entries whose normalized path is equal to prefix or starts with "prefix/".
-	EntryPathPrefix string `json:"entry_path_prefix,omitempty" yaml:"entry_path_prefix,omitempty"`
 	// Limits bounds parser memory and metadata growth; zero fields use documented defaults.
 	Limits ReaderLimits `json:"limits,omitzero" yaml:"limits,omitempty"`
-	// MinEntryOriginalSize keeps entries with original size >= this value.
-	// For uncompressed entries OriginalSize is treated as DataSize.
-	MinEntryOriginalSize uint32 `json:"min_entry_original_size,omitempty" yaml:"min_entry_original_size,omitempty"`
-	// MinEntryDataSize keeps entries with packed payload size >= this value.
-	MinEntryDataSize uint32 `json:"min_entry_data_size,omitempty" yaml:"min_entry_data_size,omitempty"`
-	// EnableJunkFilter drops malformed/mangled entries from visible entry list.
-	EnableJunkFilter bool `json:"enable_junk_filter,omitempty" yaml:"enable_junk_filter,omitempty"`
-	// FilterASCIIOnly keeps only entries with ASCII-only path bytes.
-	FilterASCIIOnly bool `json:"filter_ascii_only,omitempty" yaml:"filter_ascii_only,omitempty"`
-	// SanitizeControlChars rewrites control/format runes in entry paths for safe textual output.
-	SanitizeControlChars bool `json:"sanitize_control_chars,omitempty" yaml:"sanitize_control_chars,omitempty"`
-	// SanitizeNames rewrites entry paths to filesystem-safe names for listing workflows.
-	SanitizeNames bool `json:"sanitize_names,omitempty" yaml:"sanitize_names,omitempty"`
 }
 
 // ReaderLimits sets defensive parser limits. Zero or negative fields use defaults:

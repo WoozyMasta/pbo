@@ -275,39 +275,7 @@ func ListEntriesFromReaderAtWithOptions(ra io.ReaderAt, size int64, opts ReaderO
 		return nil, err
 	}
 
-	if opts.EnableJunkFilter {
-		parsed.entries = filterJunkEntries(parsed.entries)
-	}
-
-	parsed.entries = filterEntriesBySize(parsed.entries, opts.MinEntryOriginalSize, opts.MinEntryDataSize)
-	if opts.FilterASCIIOnly {
-		parsed.entries = filterEntriesByASCIIOnly(parsed.entries)
-	}
-
-	if opts.SanitizeNames {
-		parsed.entries = filterEntriesBySanitizedPrefix(parsed.entries, opts.EntryPathPrefix)
-	} else {
-		parsed.entries = filterEntriesByPrefix(parsed.entries, opts.EntryPathPrefix)
-	}
-
-	if opts.SanitizeControlChars {
-		parsed.entries, err = sanitizeEntryInfoControlPaths(parsed.entries)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	entries := parsed.entries
-	if opts.SanitizeNames {
-		entries, err = sanitizeEntryInfoPaths(entries)
-		if err != nil {
-			return nil, err
-		}
-
-		return entries, nil
-	}
-
-	return entries, nil
+	return parsed.entries, nil
 }
 
 // openFileWithSize opens a file and returns a handle plus current size.

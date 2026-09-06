@@ -416,12 +416,12 @@ func hasEditorDirPrefix(path string, prefix string) bool {
 	pathKey := editorPathKey(path)
 	prefixKey := editorPathKey(prefix)
 
-	return pathKey == prefixKey || strings.HasPrefix(pathKey, prefixKey+`\`)
+	return pathKey == prefixKey || strings.HasPrefix(pathKey, prefixKey+"/")
 }
 
 // editorPathKey returns case-insensitive map key for archive path.
 func editorPathKey(path string) string {
-	return strings.ToLower(path)
+	return archiveLookupKey(path)
 }
 
 // prepareBackupSlot rotates/removes existing backup generations before new commit.

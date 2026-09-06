@@ -22,9 +22,9 @@ func (nopCloser) Close() error {
 	return nil
 }
 
-// findEntryByName resolves one entry by normalized path.
+// findEntryByName resolves one raw archive entry by normalized, ASCII-folded path.
 func (r *Reader) findEntryByName(name string) *EntryInfo {
-	lookupName := NormalizePath(name)
+	lookupName := archiveLookupKey(name)
 	r.entryIndexOnce.Do(r.buildEntryIndex)
 
 	idx, ok := r.entryIndex[lookupName]
@@ -35,11 +35,11 @@ func (r *Reader) findEntryByName(name string) *EntryInfo {
 	return &r.entries[idx]
 }
 
-// buildEntryIndex builds normalized path lookup index for parsed entries.
+// buildEntryIndex builds the archive identity index for raw parsed entries.
 func (r *Reader) buildEntryIndex() {
 	index := make(map[string]int, len(r.entries))
 	for i := range r.entries {
-		key := NormalizePath(r.entries[i].Path)
+		key := archiveLookupKey(r.entries[i].Path)
 		if _, exists := index[key]; exists {
 			continue
 		}

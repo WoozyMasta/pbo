@@ -345,13 +345,10 @@ func TestOpenWithOptions_JunkFilter(t *testing.T) {
 		t.Fatalf("default entries=%d, want 5", len(rDefault.Entries()))
 	}
 
-	rFiltered, err := OpenWithOptions(path, ReaderOptions{EnableJunkFilter: true})
+	entries, err := rDefault.EntriesWithOptions(EntryViewOptions{FilterJunk: true})
 	if err != nil {
-		t.Fatalf("OpenWithOptions junk filter: %v", err)
+		t.Fatalf("EntriesWithOptions junk filter: %v", err)
 	}
-	defer func() { _ = rFiltered.Close() }()
-
-	entries := rFiltered.Entries()
 	if len(entries) != 2 {
 		t.Fatalf("filtered entries=%d, want 2", len(entries))
 	}
@@ -359,7 +356,7 @@ func TestOpenWithOptions_JunkFilter(t *testing.T) {
 		t.Fatalf("filtered paths = [%q, %q], want [keep1.txt, keep2.txt]", entries[0].Path, entries[1].Path)
 	}
 
-	got, err := rFiltered.ReadEntry("keep2.txt")
+	got, err := rDefault.ReadEntry("keep2.txt")
 	if err != nil {
 		t.Fatalf("ReadEntry keep2.txt: %v", err)
 	}
@@ -367,12 +364,12 @@ func TestOpenWithOptions_JunkFilter(t *testing.T) {
 		t.Fatalf("keep2.txt payload = %q, want world", got)
 	}
 
-	listed, err := ListEntriesWithOptions(path, ReaderOptions{EnableJunkFilter: true})
+	listed, err := ListEntriesWithOptions(path, ReaderOptions{})
 	if err != nil {
-		t.Fatalf("ListEntriesWithOptions junk filter: %v", err)
+		t.Fatalf("ListEntriesWithOptions: %v", err)
 	}
-	if len(listed) != 2 {
-		t.Fatalf("listed entries=%d, want 2", len(listed))
+	if len(listed) != 5 {
+		t.Fatalf("listed entries=%d, want raw count 5", len(listed))
 	}
 }
 

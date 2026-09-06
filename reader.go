@@ -48,7 +48,7 @@ type Reader struct {
 	ra io.ReaderAt
 	// file is set when Reader owns an *os.File opened via Open.
 	file *os.File
-	// entryIndex maps normalized entry path to first matching entry index.
+	// entryIndex maps ASCII-folded archive lookup keys to first matching view index.
 	entryIndex map[string]int
 	// header stores the fixed 21-byte PBO header block.
 	header []byte
@@ -136,7 +136,7 @@ func NewReaderFromReaderAtWithOptions(ra io.ReaderAt, size int64, opts ReaderOpt
 	return r, nil
 }
 
-// Entries returns a copy of parsed entries.
+// Entries returns a copy of the raw parsed entry list.
 func (r *Reader) Entries() []EntryInfo {
 	if r == nil {
 		return nil
@@ -147,7 +147,7 @@ func (r *Reader) Entries() []EntryInfo {
 	return entries
 }
 
-// EntriesView returns the internal entry slice without copying.
+// EntriesView returns the raw internal entry slice without copying.
 // Callers must not modify the returned slice or its elements.
 // Suitable for read-only listing and UI polling where avoiding the copy matters.
 func (r *Reader) EntriesView() []EntryInfo {
@@ -170,6 +170,23 @@ func (r *Reader) RangeEntries(fn func(EntryInfo) bool) {
 			return
 		}
 	}
+}
+
+// EntriesWithOptions returns a copy of a derived view over all raw archive entries.
+// Entry metadata keeps resolved payload offsets, so entries can be passed to OpenEntryInfo.
+func (r *Reader) EntriesWithOptions(opts EntryViewOptions) ([]EntryInfo, error) {
+	if r == nil {
+		return nil, ErrNilReader
+	}
+
+	entries, err := applyEntryViewOptions(r.entries, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]EntryInfo, len(entries))
+	copy(result, entries)
+	return result, nil
 }
 
 // Headers returns parsed headers in original order.
@@ -257,53 +274,6 @@ func (r *Reader) parse(ra io.ReaderAt, size int64, opts ReaderOptions) error {
 		return err
 	}
 	payloadEnd := expectedPayloadEnd(r.entries, r.dataStart)
-
-	// EnableJunkFilter drops clearly unusable table rows:
-	// zero-size entries, broken compressed rows, and unsafe/raw invalid paths.
-	if opts.EnableJunkFilter {
-		r.entries = filterJunkEntries(r.entries)
-	}
-
-	// MinEntryOriginalSize/MinEntryDataSize keep only entries above size thresholds.
-	// This removes tiny noise blobs before heavier path processing.
-	r.entries = filterEntriesBySize(r.entries, opts.MinEntryOriginalSize, opts.MinEntryDataSize)
-
-	// FilterASCIIOnly keeps only ASCII-path entries.
-	// Useful for quickly excluding heavily obfuscated unicode paths.
-	if opts.FilterASCIIOnly {
-		r.entries = filterEntriesByASCIIOnly(r.entries)
-	}
-
-	// EntryPathPrefix applies path scoping after cheap filters:
-	// with SanitizeNames=true we match in sanitized namespace so user-provided
-	// normalized prefixes still match mangled/raw archive names.
-	if opts.SanitizeNames {
-		r.entries = filterEntriesBySanitizedPrefix(r.entries, opts.EntryPathPrefix)
-	} else {
-		r.entries = filterEntriesByPrefix(r.entries, opts.EntryPathPrefix)
-	}
-
-	// SanitizeControlChars rewrites C0/C1 and format runes in path text.
-	// This prevents terminal/control-sequence injection in listing output.
-	if opts.SanitizeControlChars {
-		controlCharSanitizedEntries, sanitizeErr := sanitizeEntryInfoControlPaths(r.entries)
-		if sanitizeErr != nil {
-			return sanitizeErr
-		}
-
-		r.entries = controlCharSanitizedEntries
-	}
-
-	// SanitizeNames performs full filesystem-safe rewrite (reserved names, GUID suffix,
-	// illegal path chars, deterministic collision suffixes) for stable path-based access.
-	if opts.SanitizeNames {
-		sanitizedEntries, sanitizeErr := sanitizeEntryInfoPaths(r.entries)
-		if sanitizeErr != nil {
-			return sanitizeErr
-		}
-
-		r.entries = sanitizedEntries
-	}
 
 	trailerCandidate, digest, err := detectPlainTrailer(ra, size, payloadEnd, opts.TrailerMode)
 	if err != nil {

@@ -161,7 +161,7 @@ func TestSanitizeEntryInfoControlPaths(t *testing.T) {
 	}
 }
 
-func TestListEntriesWithOptionsSanitizeNames(t *testing.T) {
+func TestEntriesWithOptionsSanitizeNames(t *testing.T) {
 	t.Parallel()
 
 	path := createManualPBOWithNamedEntries(t, []manualEntry{
@@ -178,16 +178,22 @@ func TestListEntriesWithOptionsSanitizeNames(t *testing.T) {
 		t.Fatalf("unexpected raw paths: %#v", rawEntries)
 	}
 
-	sanitized, err := ListEntriesWithOptions(path, ReaderOptions{SanitizeNames: true})
+	r, err := Open(path)
 	if err != nil {
-		t.Fatalf("ListEntriesWithOptions sanitize: %v", err)
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = r.Close() }()
+
+	sanitized, err := r.EntriesWithOptions(EntryViewOptions{SanitizeNames: true})
+	if err != nil {
+		t.Fatalf("EntriesWithOptions sanitize: %v", err)
 	}
 	if sanitized[0].Path != "_CON.txt" || sanitized[1].Path != "a_b.txt" || sanitized[2].Path != "a_b~2.txt" {
 		t.Fatalf("unexpected sanitized paths: %#v", sanitized)
 	}
 }
 
-func TestOpenWithOptionsSanitizeNames(t *testing.T) {
+func TestEntriesWithOptionsSanitizeNamesPreserveIdentity(t *testing.T) {
 	t.Parallel()
 
 	path := createManualPBOWithNamedEntries(t, []manualEntry{
@@ -196,13 +202,16 @@ func TestOpenWithOptionsSanitizeNames(t *testing.T) {
 		{name: "a?b.txt", data: []byte("c")},
 	})
 
-	r, err := OpenWithOptions(path, ReaderOptions{SanitizeNames: true})
+	r, err := Open(path)
 	if err != nil {
-		t.Fatalf("OpenWithOptions sanitize: %v", err)
+		t.Fatalf("Open: %v", err)
 	}
 	defer func() { _ = r.Close() }()
 
-	entries := r.Entries()
+	entries, err := r.EntriesWithOptions(EntryViewOptions{SanitizeNames: true})
+	if err != nil {
+		t.Fatalf("EntriesWithOptions sanitize: %v", err)
+	}
 	if len(entries) != 3 {
 		t.Fatalf("len(entries)=%d, want 3", len(entries))
 	}
@@ -211,16 +220,24 @@ func TestOpenWithOptionsSanitizeNames(t *testing.T) {
 		t.Fatalf("unexpected sanitized paths: %#v", entries)
 	}
 
-	got, err := r.ReadEntry("_CON.txt")
+	stream, err := r.OpenEntryInfo(entries[0])
 	if err != nil {
-		t.Fatalf("ReadEntry sanitized path: %v", err)
+		t.Fatalf("OpenEntryInfo sanitized view: %v", err)
+	}
+	got, err := io.ReadAll(stream)
+	_ = stream.Close()
+	if err != nil {
+		t.Fatalf("read sanitized entry: %v", err)
 	}
 	if !bytes.Equal(got, []byte("a")) {
 		t.Fatalf("ReadEntry sanitized path got %q, want %q", got, []byte("a"))
 	}
+	if _, err := r.ReadEntry("_CON.txt"); err == nil {
+		t.Fatal("sanitized display path must not replace raw archive lookup identity")
+	}
 }
 
-func TestOpenWithOptionsSanitizeControlChars(t *testing.T) {
+func TestEntriesWithOptionsSanitizeControlChars(t *testing.T) {
 	t.Parallel()
 
 	path := createManualPBOWithNamedEntries(t, []manualEntry{
@@ -228,13 +245,16 @@ func TestOpenWithOptionsSanitizeControlChars(t *testing.T) {
 		{name: "scripts\\\u200fname.c", data: []byte("b")},
 	})
 
-	r, err := OpenWithOptions(path, ReaderOptions{SanitizeControlChars: true})
+	r, err := Open(path)
 	if err != nil {
-		t.Fatalf("OpenWithOptions sanitize control chars: %v", err)
+		t.Fatalf("Open: %v", err)
 	}
 	defer func() { _ = r.Close() }()
 
-	entries := r.Entries()
+	entries, err := r.EntriesWithOptions(EntryViewOptions{SanitizeControlChars: true})
+	if err != nil {
+		t.Fatalf("EntriesWithOptions sanitize control chars: %v", err)
+	}
 	if len(entries) != 2 {
 		t.Fatalf("len(entries)=%d, want 2", len(entries))
 	}

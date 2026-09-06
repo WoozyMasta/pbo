@@ -24,6 +24,11 @@ func NormalizePath(raw string) string {
 	return strings.TrimSuffix(raw, "/")
 }
 
+// archiveLookupKey normalizes separators and folds ASCII case for archive identity.
+func archiveLookupKey(raw string) string {
+	return asciiLower(NormalizePath(raw))
+}
+
 // NormalizePrefixHeader normalizes PBO "prefix" header value to "\" separators.
 func NormalizePrefixHeader(raw string) string {
 	normalized := NormalizePath(raw)

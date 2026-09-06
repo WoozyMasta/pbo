@@ -6,6 +6,60 @@ package pbo
 
 import "strings"
 
+// EntryViewOptions configures a derived view of the raw archive entry list.
+type EntryViewOptions struct {
+	// PathPrefix keeps entries equal to this normalized path or below it.
+	PathPrefix string `json:"path_prefix,omitempty" yaml:"path_prefix,omitempty"`
+	// MinOriginalSize keeps entries at or above this unpacked size.
+	MinOriginalSize uint32 `json:"min_original_size,omitempty" yaml:"min_original_size,omitempty"`
+	// MinDataSize keeps entries at or above this packed size.
+	MinDataSize uint32 `json:"min_data_size,omitempty" yaml:"min_data_size,omitempty"`
+	// FilterJunk drops entries that cannot be safely listed or extracted.
+	FilterJunk bool `json:"filter_junk,omitempty" yaml:"filter_junk,omitempty"`
+	// FilterASCIIOnly keeps entries whose raw path bytes are ASCII.
+	FilterASCIIOnly bool `json:"filter_ascii_only,omitempty" yaml:"filter_ascii_only,omitempty"`
+	// SanitizeControlChars rewrites control and format runes in paths.
+	SanitizeControlChars bool `json:"sanitize_control_chars,omitempty" yaml:"sanitize_control_chars,omitempty"`
+	// SanitizeNames rewrites paths to filesystem-safe names.
+	SanitizeNames bool `json:"sanitize_names,omitempty" yaml:"sanitize_names,omitempty"`
+}
+
+// applyEntryViewOptions derives a filtered or sanitized view without modifying raw entries.
+func applyEntryViewOptions(entries []EntryInfo, opts EntryViewOptions) ([]EntryInfo, error) {
+	if opts.FilterJunk {
+		entries = filterJunkEntries(entries)
+	}
+
+	entries = filterEntriesBySize(entries, opts.MinOriginalSize, opts.MinDataSize)
+	if opts.FilterASCIIOnly {
+		entries = filterEntriesByASCIIOnly(entries)
+	}
+
+	if opts.SanitizeNames {
+		entries = filterEntriesBySanitizedPrefix(entries, opts.PathPrefix)
+	} else {
+		entries = filterEntriesByPrefix(entries, opts.PathPrefix)
+	}
+
+	if opts.SanitizeControlChars {
+		var err error
+		entries, err = sanitizeEntryInfoControlPaths(entries)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if opts.SanitizeNames {
+		var err error
+		entries, err = sanitizeEntryInfoPaths(entries)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return entries, nil
+}
+
 // filterOriginalSizeOrDataSize returns OriginalSize when present, otherwise DataSize.
 func filterOriginalSizeOrDataSize(entry EntryInfo) uint32 {
 	if entry.OriginalSize == 0 {

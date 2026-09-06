@@ -19,9 +19,15 @@ and this project adheres to [Semantic Versioning][].
 ### Added
 
 * Reader and pack options expose generic and typed PBO property accessors.
+* `Reader.EntriesWithOptions` derives filtered
+  and sanitized entry views while preserving raw archive index metadata.
 
 ### Changed
 
+* `Reader.Entries`, `EntriesView`, path lookup and default extraction
+  now use raw archive entries.
+  Filtering and sanitization are explicit through `Reader.EntriesWithOptions`;
+  presentation fields were removed from `ReaderOptions`.
 * Writer rejects malformed NUL-terminated fields
   before output or file truncation.
 * Extraction limits workers to selected entries
@@ -38,6 +44,8 @@ and this project adheres to [Semantic Versioning][].
   `ReaderOptions.TrailerMode` can force trailer presence or absence;
   sealed auto-detection verifies a candidate digest before choosing its seed.
 * Sealed transforms batch 4 KiB segments into bounded 1 MiB I/O operations.
+* Reader lookup, writer path validation and editor path matching
+  now share separator normalization with ASCII-only case folding.
 
 ## [0.3.0][] - 2026-07-01
 

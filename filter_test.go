@@ -29,7 +29,7 @@ func TestFilterEntriesBySize(t *testing.T) {
 	}
 }
 
-func TestListEntriesWithOptions_SizeFilter(t *testing.T) {
+func TestEntriesWithOptions_SizeFilter(t *testing.T) {
 	t.Parallel()
 
 	path := createManualPBOWithNamedEntries(t, []manualEntry{
@@ -37,9 +37,15 @@ func TestListEntriesWithOptions_SizeFilter(t *testing.T) {
 		{name: "big.txt", data: []byte("1234567890abcd")},
 	})
 
-	entries, err := ListEntriesWithOptions(path, ReaderOptions{MinEntryOriginalSize: 12})
+	r, err := Open(path)
 	if err != nil {
-		t.Fatalf("ListEntriesWithOptions size filter: %v", err)
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = r.Close() }()
+
+	entries, err := r.EntriesWithOptions(EntryViewOptions{MinOriginalSize: 12})
+	if err != nil {
+		t.Fatalf("EntriesWithOptions size filter: %v", err)
 	}
 
 	if len(entries) != 1 {
@@ -51,7 +57,7 @@ func TestListEntriesWithOptions_SizeFilter(t *testing.T) {
 	}
 }
 
-func TestOpenWithOptions_SizeFilter(t *testing.T) {
+func TestEntriesWithOptions_SizeFilterAndSanitize(t *testing.T) {
 	t.Parallel()
 
 	path := createManualPBOWithNamedEntries(t, []manualEntry{
@@ -59,16 +65,19 @@ func TestOpenWithOptions_SizeFilter(t *testing.T) {
 		{name: "big.txt", data: []byte("1234567890abcd")},
 	})
 
-	r, err := OpenWithOptions(path, ReaderOptions{
-		SanitizeNames:        true,
-		MinEntryOriginalSize: 12,
-	})
+	r, err := Open(path)
 	if err != nil {
 		t.Fatalf("OpenWithOptions size filter: %v", err)
 	}
 	defer func() { _ = r.Close() }()
 
-	entries := r.Entries()
+	entries, err := r.EntriesWithOptions(EntryViewOptions{
+		SanitizeNames:   true,
+		MinOriginalSize: 12,
+	})
+	if err != nil {
+		t.Fatalf("EntriesWithOptions size filter: %v", err)
+	}
 	if len(entries) != 1 {
 		t.Fatalf("len(entries)=%d, want 1", len(entries))
 	}
@@ -125,7 +134,7 @@ func TestFilterEntriesByASCIIOnly(t *testing.T) {
 	}
 }
 
-func TestOpenWithOptions_PrefixFilterBeforeSanitize(t *testing.T) {
+func TestEntriesWithOptions_PrefixFilterBeforeSanitize(t *testing.T) {
 	t.Parallel()
 
 	path := createManualPBOWithNamedEntries(t, []manualEntry{
@@ -133,16 +142,19 @@ func TestOpenWithOptions_PrefixFilterBeforeSanitize(t *testing.T) {
 		{name: `scripts\COM2.c`, data: []byte("B")},
 	})
 
-	r, err := OpenWithOptions(path, ReaderOptions{
-		EntryPathPrefix: "data",
-		SanitizeNames:   true,
-	})
+	r, err := Open(path)
 	if err != nil {
-		t.Fatalf("OpenWithOptions prefix filter: %v", err)
+		t.Fatalf("Open: %v", err)
 	}
 	defer func() { _ = r.Close() }()
 
-	entries := r.Entries()
+	entries, err := r.EntriesWithOptions(EntryViewOptions{
+		PathPrefix:    "data",
+		SanitizeNames: true,
+	})
+	if err != nil {
+		t.Fatalf("EntriesWithOptions prefix filter: %v", err)
+	}
 	if len(entries) != 1 {
 		t.Fatalf("len(entries)=%d, want 1", len(entries))
 	}
@@ -152,7 +164,7 @@ func TestOpenWithOptions_PrefixFilterBeforeSanitize(t *testing.T) {
 	}
 }
 
-func TestOpenWithOptions_ASCIIOnlyFilter(t *testing.T) {
+func TestEntriesWithOptions_ASCIIOnlyFilter(t *testing.T) {
 	t.Parallel()
 
 	path := createManualPBOWithNamedEntries(t, []manualEntry{
@@ -161,13 +173,16 @@ func TestOpenWithOptions_ASCIIOnlyFilter(t *testing.T) {
 		{name: "config.cpp", data: []byte("C")},
 	})
 
-	r, err := OpenWithOptions(path, ReaderOptions{FilterASCIIOnly: true})
+	r, err := Open(path)
 	if err != nil {
-		t.Fatalf("OpenWithOptions ASCII filter: %v", err)
+		t.Fatalf("Open: %v", err)
 	}
 	defer func() { _ = r.Close() }()
 
-	entries := r.Entries()
+	entries, err := r.EntriesWithOptions(EntryViewOptions{FilterASCIIOnly: true})
+	if err != nil {
+		t.Fatalf("EntriesWithOptions ASCII filter: %v", err)
+	}
 	if len(entries) != 2 {
 		t.Fatalf("len(entries)=%d, want 2", len(entries))
 	}
@@ -181,7 +196,7 @@ func TestOpenWithOptions_ASCIIOnlyFilter(t *testing.T) {
 	}
 }
 
-func TestOpenWithOptions_SanitizePrefixFilter_ObfuscatedSpacesAndGUID(t *testing.T) {
+func TestEntriesWithOptions_SanitizePrefixFilter_ObfuscatedSpacesAndGUID(t *testing.T) {
 	t.Parallel()
 
 	path := createManualPBOWithNamedEntries(t, []manualEntry{
@@ -189,16 +204,19 @@ func TestOpenWithOptions_SanitizePrefixFilter_ObfuscatedSpacesAndGUID(t *testing
 		{name: `scripts\4_world\ other \  .{22877a6d-37a1-461a-91b0-dbda5aaebc99}\COM2.c`, data: []byte("B")},
 	})
 
-	r, err := OpenWithOptions(path, ReaderOptions{
-		SanitizeNames:   true,
-		EntryPathPrefix: `scripts/4_world/nLhotvu0/.{22877a6d-37a1-461a-91b0-dbda5aaebc99}`,
-	})
+	r, err := Open(path)
 	if err != nil {
-		t.Fatalf("OpenWithOptions sanitize prefix filter: %v", err)
+		t.Fatalf("Open: %v", err)
 	}
 	defer func() { _ = r.Close() }()
 
-	entries := r.Entries()
+	entries, err := r.EntriesWithOptions(EntryViewOptions{
+		SanitizeNames: true,
+		PathPrefix:    `scripts/4_world/nLhotvu0/.{22877a6d-37a1-461a-91b0-dbda5aaebc99}`,
+	})
+	if err != nil {
+		t.Fatalf("EntriesWithOptions sanitize prefix filter: %v", err)
+	}
 	if len(entries) != 1 {
 		t.Fatalf("len(entries)=%d, want 1", len(entries))
 	}

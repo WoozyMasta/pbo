@@ -146,24 +146,44 @@ if err != nil {
 
 ### Reader filters
 
-`OpenWithOptions` and `ListEntriesWithOptions` support entry filters for
-noisy/obfuscated archives.
+`Reader.EntriesWithOptions` derives filtered
+and sanitized lists from the raw archive index.
+Entries keep their resolved offsets, so they can be passed to `OpenEntryInfo`
+even when their displayed paths are rewritten.
 
 ```go
-r, err := pbo.OpenWithOptions("addon.pbo", pbo.ReaderOptions{
-  MinEntryOriginalSize: 12,   // logical original size (fallback to DataSize)
-  MinEntryDataSize:     0,    // packed size threshold
-  EntryPathPrefix:      "scripts/4_world",
-  FilterASCIIOnly:      false,
-  SanitizeControlChars: true, // safe textual output
-  SanitizeNames:        true, // filesystem-safe normalized paths
-})
+r, err := pbo.Open("addon.pbo")
 if err != nil {
   return err
 }
 defer r.Close()
 
-// Extract uses parsed entries by default.
+entries, err := r.EntriesWithOptions(pbo.EntryViewOptions{
+  MinOriginalSize:      12, // logical original size (fallback to DataSize)
+  PathPrefix:           "scripts/4_world",
+  SanitizeControlChars: true,
+  SanitizeNames:        true,
+})
+if err != nil {
+  return err
+}
+for _, entry := range entries {
+  rc, err := r.OpenEntryInfo(entry)
+  if err != nil {
+    return err
+  }
+  _ = rc.Close()
+}
+```
+
+`ReaderOptions` controls archive decoding and offset interpretation.
+`Entries` and path lookup use raw archive paths;
+`EntryViewOptions` applies only to the returned derived list,
+and its zero value returns all raw index entries.
+Pass a derived list through `ExtractOptions.Entries`
+to extract only that selection.
+
+```go
 if err := r.Extract(ctx, "out", pbo.ExtractOptions{MaxWorkers: 4}); err != nil {
   return err
 }
