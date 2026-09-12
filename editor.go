@@ -10,22 +10,23 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"sort"
 	"strings"
 )
 
 // Editor accumulates archive edit operations and applies them on Commit.
 type Editor struct {
-	path string
-	ops  []editOperation
-	opts EditOptions
+	path        string
+	ops         []editOperation
+	propertyOps []editorPropertyOperation
+	opts        EditOptions
 }
 
 // editOperation stores one staged editor operation.
 type editOperation struct {
-	inputs []Input
-	paths  []string
-	kind   editOperationKind
+	inputs      []Input
+	paths       []string
+	sourceIndex int
+	kind        editOperationKind
 }
 
 // editOperationKind identifies staged edit action type.
@@ -40,7 +41,30 @@ const (
 	editOperationDelete
 	// editOperationDeleteDir removes entries by directory prefix.
 	editOperationDeleteDir
+	// editOperationReplaceAt rewrites an entry by its source index.
+	editOperationReplaceAt
+	// editOperationDeleteAt removes an entry by its source index.
+	editOperationDeleteAt
 )
+
+// editorPropertyOperationKind identifies a staged property mutation.
+type editorPropertyOperationKind uint8
+
+const (
+	// editorPropertySet stores or replaces one named property.
+	editorPropertySet editorPropertyOperationKind = iota + 1
+	// editorPropertyDelete removes a named property.
+	editorPropertyDelete
+	// editorPropertyClear removes all properties.
+	editorPropertyClear
+)
+
+// editorPropertyOperation stores one staged header mutation.
+type editorPropertyOperation struct {
+	name  string
+	value string
+	kind  editorPropertyOperationKind
+}
 
 // OpenEditor creates staged editor for file-based archive rewrite workflow.
 func OpenEditor(path string, opts EditOptions) (*Editor, error) {
@@ -104,6 +128,29 @@ func (e *Editor) Replace(inputs ...Input) error {
 	return nil
 }
 
+// ReplaceAt schedules replacing one source entry by its zero-based index.
+func (e *Editor) ReplaceAt(sourceIndex int, input Input) error {
+	if e == nil {
+		return ErrNilReader
+	}
+	if sourceIndex < 0 {
+		return fmt.Errorf("source index %d: %w", sourceIndex, ErrEntryNotFound)
+	}
+
+	normalized, err := normalizeEditorInputs([]Input{input})
+	if err != nil {
+		return err
+	}
+
+	e.ops = append(e.ops, editOperation{
+		kind:        editOperationReplaceAt,
+		inputs:      normalized,
+		sourceIndex: sourceIndex,
+	})
+
+	return nil
+}
+
 // Delete schedules exact-path removal.
 func (e *Editor) Delete(paths ...string) error {
 	if e == nil {
@@ -127,6 +174,23 @@ func (e *Editor) Delete(paths ...string) error {
 	return nil
 }
 
+// DeleteAt schedules removing one source entry by its zero-based index.
+func (e *Editor) DeleteAt(sourceIndex int) error {
+	if e == nil {
+		return ErrNilReader
+	}
+	if sourceIndex < 0 {
+		return fmt.Errorf("source index %d: %w", sourceIndex, ErrEntryNotFound)
+	}
+
+	e.ops = append(e.ops, editOperation{
+		kind:        editOperationDeleteAt,
+		sourceIndex: sourceIndex,
+	})
+
+	return nil
+}
+
 // DeleteDir schedules directory-prefix removal.
 func (e *Editor) DeleteDir(prefixes ...string) error {
 	if e == nil {
@@ -145,6 +209,54 @@ func (e *Editor) DeleteDir(prefixes ...string) error {
 	e.ops = append(e.ops, editOperation{
 		kind:  editOperationDeleteDir,
 		paths: normalized,
+	})
+
+	return nil
+}
+
+// SetProperty schedules setting one named property while preserving other source properties.
+func (e *Editor) SetProperty(name string, value string) error {
+	if e == nil {
+		return ErrNilReader
+	}
+	if err := validateHeaderProperties([]HeaderPair{{Key: name, Value: value}}); err != nil {
+		return err
+	}
+
+	e.propertyOps = append(e.propertyOps, editorPropertyOperation{
+		kind:  editorPropertySet,
+		name:  name,
+		value: value,
+	})
+
+	return nil
+}
+
+// DeleteProperty schedules removing every source property with the given name.
+func (e *Editor) DeleteProperty(name string) error {
+	if e == nil {
+		return ErrNilReader
+	}
+	if name == "" || strings.IndexByte(name, 0) >= 0 {
+		return ErrInvalidHeaderProperty
+	}
+
+	e.propertyOps = append(e.propertyOps, editorPropertyOperation{
+		kind: editorPropertyDelete,
+		name: name,
+	})
+
+	return nil
+}
+
+// ClearProperties schedules removing all archive properties.
+func (e *Editor) ClearProperties() error {
+	if e == nil {
+		return ErrNilReader
+	}
+
+	e.propertyOps = append(e.propertyOps, editorPropertyOperation{
+		kind: editorPropertyClear,
 	})
 
 	return nil
@@ -214,9 +326,7 @@ func (e *Editor) commitFromBackup(ctx context.Context, backupPath string) (*Pack
 		return nil, err
 	}
 
-	if len(packOpts.Headers) == 0 {
-		packOpts.Headers = srcReader.Headers()
-	}
+	packOpts.Headers = applyEditorProperties(srcReader.Headers(), packOpts.Headers, e.propertyOps)
 
 	dstFile, err := os.OpenFile(e.path, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
@@ -306,117 +416,198 @@ func normalizeEditorArchivePath(raw string) (string, error) {
 	return normalizeArchiveEntryPath(raw)
 }
 
-// buildEditPlan applies staged operations to source entries and builds final write plan.
+// plannedEditEntry tracks one ordered source or staged entry during plan construction.
+type plannedEditEntry struct {
+	item  rewriteEntry
+	key   string
+	alive bool
+}
+
+// buildEditPlan applies staged operations while preserving source order and raw paths.
 func buildEditPlan(sourceEntries []EntryInfo, ops []editOperation) ([]rewriteEntry, error) {
-	state := make(map[string]rewriteEntry, len(sourceEntries))
+	planned := make([]plannedEditEntry, 0, len(sourceEntries)+len(ops))
+	byPath := make(map[string][]int, len(sourceEntries)+len(ops))
+
 	for i := range sourceEntries {
-		path, err := normalizeEditorArchivePath(sourceEntries[i].Path)
-		if err != nil {
-			return nil, fmt.Errorf("%w: source entry path %q", ErrInvalidEntryPath, sourceEntries[i].Path)
+		entry := new(EntryInfo)
+		*entry = sourceEntries[i]
+		key := editorPathKey(entry.Path)
+		planned = append(planned, plannedEditEntry{
+			item:  rewriteEntry{path: entry.Path, source: entry},
+			key:   key,
+			alive: true,
+		})
+		byPath[key] = append(byPath[key], i)
+	}
+
+	activeMatches := func(key string) []int {
+		indices := byPath[key]
+		matches := make([]int, 0, len(indices))
+		for _, index := range indices {
+			if planned[index].alive && planned[index].key == key {
+				matches = append(matches, index)
+			}
 		}
 
-		key := editorPathKey(path)
-		if _, exists := state[key]; exists {
-			return nil, fmt.Errorf("%w: %q", ErrDuplicateEntryPath, path)
-		}
+		return matches
+	}
 
-		entry := sourceEntries[i]
-		entry.Path = path
-		state[key] = rewriteEntry{
-			path:   path,
-			source: &entry,
-		}
+	appendInput := func(input Input) {
+		item := input
+		index := len(planned)
+		key := editorPathKey(item.Path)
+		planned = append(planned, plannedEditEntry{
+			item:  rewriteEntry{path: item.Path, input: &item},
+			key:   key,
+			alive: true,
+		})
+		byPath[key] = append(byPath[key], index)
+	}
+
+	replaceAt := func(index int, input Input) {
+		item := input
+		key := editorPathKey(item.Path)
+		planned[index].item = rewriteEntry{path: item.Path, input: &item}
+		planned[index].key = key
+		byPath[key] = append(byPath[key], index)
 	}
 
 	for _, op := range ops {
 		switch op.kind {
 		case editOperationAdd:
-			if err := applyEditAdd(state, op.inputs); err != nil {
-				return nil, err
+			for _, input := range op.inputs {
+				key := editorPathKey(input.Path)
+				if len(activeMatches(key)) != 0 {
+					return nil, fmt.Errorf("%w: %q", ErrDuplicateEntryPath, input.Path)
+				}
+
+				appendInput(input)
 			}
+
 		case editOperationReplace:
-			if err := applyEditReplace(state, op.inputs); err != nil {
-				return nil, err
+			for _, input := range op.inputs {
+				key := editorPathKey(input.Path)
+				matches := activeMatches(key)
+				if len(matches) == 0 {
+					return nil, fmt.Errorf("%w: %q", ErrEntryNotFound, input.Path)
+				}
+				if len(matches) > 1 {
+					return nil, fmt.Errorf("%w: %q", ErrAmbiguousEntryPath, input.Path)
+				}
+
+				replaceAt(matches[0], input)
 			}
+
+		case editOperationReplaceAt:
+			if op.sourceIndex >= len(sourceEntries) || !planned[op.sourceIndex].alive {
+				return nil, fmt.Errorf("source index %d: %w", op.sourceIndex, ErrEntryNotFound)
+			}
+			if len(op.inputs) != 1 {
+				return nil, fmt.Errorf("source index %d: expected one replacement input", op.sourceIndex)
+			}
+
+			replaceAt(op.sourceIndex, op.inputs[0])
+
 		case editOperationDelete:
-			applyEditDelete(state, op.paths)
+			for _, path := range op.paths {
+				key := editorPathKey(path)
+				matches := activeMatches(key)
+				if len(matches) > 1 {
+					return nil, fmt.Errorf("%w: %q", ErrAmbiguousEntryPath, path)
+				}
+
+				if len(matches) == 1 {
+					planned[matches[0]].alive = false
+				}
+			}
+
+		case editOperationDeleteAt:
+			if op.sourceIndex >= len(sourceEntries) || !planned[op.sourceIndex].alive {
+				return nil, fmt.Errorf("source index %d: %w", op.sourceIndex, ErrEntryNotFound)
+			}
+
+			planned[op.sourceIndex].alive = false
+
 		case editOperationDeleteDir:
-			applyEditDeleteDir(state, op.paths)
+			applyEditDeleteDir(planned, op.paths)
+
 		default:
 			return nil, fmt.Errorf("unknown edit operation kind: %d", op.kind)
 		}
 	}
 
-	plan := make([]rewriteEntry, 0, len(state))
-	for _, item := range state {
-		plan = append(plan, item)
+	plan := make([]rewriteEntry, 0, len(planned))
+	for i := range planned {
+		if planned[i].alive {
+			plan = append(plan, planned[i].item)
+		}
 	}
-
-	sort.Slice(plan, func(i, j int) bool { return plan[i].path < plan[j].path })
 
 	return plan, nil
 }
 
-// applyEditAdd adds new entries and fails on existing paths.
-func applyEditAdd(state map[string]rewriteEntry, inputs []Input) error {
-	for _, in := range inputs {
-		key := editorPathKey(in.Path)
-		if _, exists := state[key]; exists {
-			return fmt.Errorf("%w: %q", ErrDuplicateEntryPath, in.Path)
-		}
+// applyEditorProperties overlays pack properties and staged mutations on source headers.
+func applyEditorProperties(source []HeaderPair, pack []HeaderPair, ops []editorPropertyOperation) []HeaderPair {
+	headers := append([]HeaderPair(nil), source...)
+	for _, property := range pack {
+		headers = setProperty(headers, property.Key, property.Value)
+	}
 
-		item := in
-		state[key] = rewriteEntry{
-			path:  item.Path,
-			input: &item,
+	for _, op := range ops {
+		switch op.kind {
+		case editorPropertySet:
+			headers = setProperty(headers, op.name, op.value)
+
+		case editorPropertyDelete:
+			headers = deleteProperty(headers, op.name)
+
+		case editorPropertyClear:
+			headers = nil
 		}
 	}
 
-	return nil
+	return headers
 }
 
-// applyEditReplace replaces existing entries and fails on missing paths.
-func applyEditReplace(state map[string]rewriteEntry, inputs []Input) error {
-	for _, in := range inputs {
-		key := editorPathKey(in.Path)
-		if _, exists := state[key]; !exists {
-			return fmt.Errorf("%w: %q", ErrEntryNotFound, in.Path)
-		}
-
-		item := in
-		state[key] = rewriteEntry{
-			path:  item.Path,
-			input: &item,
-		}
-	}
-
-	return nil
-}
-
-// applyEditDelete removes exact paths from state.
-func applyEditDelete(state map[string]rewriteEntry, paths []string) {
-	for _, path := range paths {
-		delete(state, editorPathKey(path))
-	}
-}
-
-// applyEditDeleteDir removes entries matching directory prefixes.
-func applyEditDeleteDir(state map[string]rewriteEntry, prefixes []string) {
-	for _, prefix := range prefixes {
-		for key, item := range state {
-			if hasEditorDirPrefix(item.path, prefix) {
-				delete(state, key)
-			}
+// applyEditDeleteDir removes live entries matching normalized directory prefixes in one pass.
+func applyEditDeleteDir(planned []plannedEditEntry, prefixes []string) {
+	prefixKeys := editorDirPrefixKeys(prefixes)
+	for i := range planned {
+		if planned[i].alive && hasAnyEditorDirPrefixKey(planned[i].key, prefixKeys) {
+			planned[i].alive = false
 		}
 	}
 }
 
-// hasEditorDirPrefix reports whether path is equal to prefix or inside prefixed directory.
-func hasEditorDirPrefix(path string, prefix string) bool {
-	pathKey := editorPathKey(path)
-	prefixKey := editorPathKey(prefix)
+// editorDirPrefixKeys normalizes directory prefixes once before scanning entries.
+func editorDirPrefixKeys(prefixes []string) []string {
+	keys := make([]string, len(prefixes))
+	for i, prefix := range prefixes {
+		keys[i] = editorPathKey(prefix)
+	}
 
-	return pathKey == prefixKey || strings.HasPrefix(pathKey, prefixKey+"/")
+	return keys
+}
+
+// hasEditorDirPrefixKey compares already normalized archive lookup keys.
+func hasEditorDirPrefixKey(pathKey string, prefixKey string) bool {
+	if pathKey == prefixKey {
+		return true
+	}
+
+	return len(pathKey) > len(prefixKey) &&
+		strings.HasPrefix(pathKey, prefixKey) && pathKey[len(prefixKey)] == '/'
+}
+
+// hasAnyEditorDirPrefixKey matches a normalized path against prepared prefixes.
+func hasAnyEditorDirPrefixKey(pathKey string, prefixKeys []string) bool {
+	for _, prefixKey := range prefixKeys {
+		if hasEditorDirPrefixKey(pathKey, prefixKey) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // editorPathKey returns case-insensitive map key for archive path.
@@ -433,6 +624,7 @@ func prepareBackupSlot(backupPath string, keep int) error {
 	switch keep {
 	case 0, 1:
 		return removeIfExists(backupPath)
+
 	default:
 		oldest := fmt.Sprintf("%s.%d", backupPath, keep-1)
 		if err := removeIfExists(oldest); err != nil {

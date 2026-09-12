@@ -48,6 +48,8 @@ var (
 	ErrInvalidEntryPath = errors.New("invalid entry path")
 	// ErrDuplicateEntryPath means two inputs resolve to the same path (case-insensitive).
 	ErrDuplicateEntryPath = errors.New("duplicate entry path")
+	// ErrAmbiguousEntryPath means a path operation matches multiple archive entries.
+	ErrAmbiguousEntryPath = errors.New("ambiguous entry path")
 	// ErrInvalidExtractPath means archive entry path is invalid for extraction destination.
 	ErrInvalidExtractPath = errors.New("invalid extract path")
 	// ErrExtractPathOutsideRoot means resolved extraction path escapes destination root.

@@ -58,6 +58,18 @@ larger inputs are written without compression.
 [OpenEditor] stages additions, replacements, and deletions,
 then applies them as one archive rewrite with [Editor.Commit].
 File-based edits can retain and rotate backup generations.
+The editor preserves untouched entries' raw paths,
+metadata, packed payload bytes, and source order;
+added entries are appended in staging order.
+Path-based replacement and deletion return [ErrAmbiguousEntryPath]
+when a path identifies multiple entries.
+[Editor.ReplaceAt] and [Editor.DeleteAt] address a specific source entry
+by its zero-based index in the original archive.
+
+Source properties are retained
+while [PackOptions.Headers] and [Editor.SetProperty] apply named overrides.
+[Editor.DeleteProperty] removes a named property,
+and [Editor.ClearProperties] explicitly removes all properties.
 
 # Headers and signatures
 

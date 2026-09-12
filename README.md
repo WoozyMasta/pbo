@@ -199,6 +199,17 @@ Raise individual limits for unusual archives.
 Use `OpenEditor` for transactional changes to an existing archive.
 Queue add/replace/delete operations, then apply once with `Commit`.
 
+The editor keeps untouched source entries in their original order
+with their raw paths, metadata, and packed payload bytes.
+New entries are appended in staging order.
+`PackOptions.Headers` overlays named properties while retaining
+other source properties; use `SetProperty`, `DeleteProperty`,
+or `ClearProperties` for explicit header mutations.
+
+Path-based `Replace` and `Delete` return `ErrAmbiguousEntryPath` if a path
+matches multiple source entries. Use `ReplaceAt` or `DeleteAt` with the
+zero-based index from the original entry listing to target one duplicate.
+
 ```go
 editor, err := pbo.OpenEditor("addon.pbo", pbo.EditOptions{
   PackOptions: pbo.PackOptions{

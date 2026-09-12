@@ -528,10 +528,11 @@ func BenchmarkEditDelete(b *testing.B) {
 func BenchmarkEditorDeleteDirLargeIndexMultiplePrefixes(b *testing.B) {
 	state := makeBenchDeleteDirState(benchLargeIndexEntries)
 	prefixes := []string{"grp_010", "grp_050", "grp_100", "grp_150"}
-	removed := make(map[string]rewriteEntry)
-	for key, item := range state {
-		if hasAnyEditorDirPrefix(item.path, prefixes) {
-			removed[key] = item
+	prefixKeys := editorDirPrefixKeys(prefixes)
+	removed := make([]int, 0)
+	for i := range state {
+		if hasAnyEditorDirPrefixKey(state[i].key, prefixKeys) {
+			removed = append(removed, i)
 		}
 	}
 	if len(removed) == 0 {
@@ -542,8 +543,8 @@ func BenchmarkEditorDeleteDirLargeIndexMultiplePrefixes(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		applyEditDeleteDir(state, prefixes)
-		for key, item := range removed {
-			state[key] = item
+		for _, index := range removed {
+			state[index].alive = true
 		}
 	}
 	b.StopTimer()
@@ -609,26 +610,19 @@ func benchmarkReadEntryMemory(b *testing.B, compressed bool) {
 }
 
 // makeBenchDeleteDirState builds editor state outside the timed loop.
-func makeBenchDeleteDirState(numEntries int) map[string]rewriteEntry {
-	state := make(map[string]rewriteEntry, numEntries)
+
+func makeBenchDeleteDirState(numEntries int) []plannedEditEntry {
+	state := make([]plannedEditEntry, numEntries)
 	for i := 0; i < numEntries; i++ {
 		path := benchmarkLargePath(i)
-		item := rewriteEntry{path: path}
-		state[editorPathKey(path)] = item
-	}
-
-	return state
-}
-
-// hasAnyEditorDirPrefix reports whether a path matches one of the benchmark prefixes.
-func hasAnyEditorDirPrefix(path string, prefixes []string) bool {
-	for _, prefix := range prefixes {
-		if hasEditorDirPrefix(path, prefix) {
-			return true
+		state[i] = plannedEditEntry{
+			item:  rewriteEntry{path: path},
+			key:   editorPathKey(path),
+			alive: true,
 		}
 	}
 
-	return false
+	return state
 }
 
 // createBenchLargePayloadPBO creates a sparse large archive with one indexed entry.
