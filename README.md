@@ -15,7 +15,14 @@ Main points:
 ### Pack
 
 `PackFile` writes a deterministic PBO from `[]Input`.
-Compression is optional and controlled by path rules. Examples below use `github.com/woozymasta/pathrules`.
+Compression is optional and controlled by path rules.
+Examples below use `github.com/woozymasta/pathrules`.
+`Pack` writes from offset zero.
+It truncates outputs that support `Truncate(int64)`;
+other seekable outputs must be empty and positioned at zero.
+Successful writes leave the output positioned at the end of the archive.
+`PackFile` and `PackAndHashFile` build a complete archive
+before replacing an existing destination.
 
 ```go
 inputs := []pbo.Input{

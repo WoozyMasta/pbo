@@ -22,6 +22,12 @@ var (
 	ErrWriterAtRequired = errors.New("writerAt is required")
 	// ErrNilWriter means the writer is nil.
 	ErrNilWriter = errors.New("writer is nil")
+	// ErrOutputNotEmpty means a non-truncatable output already contains data.
+	ErrOutputNotEmpty = errors.New("output is not empty and cannot be truncated")
+	// ErrOutputPosition means a non-truncatable output is not positioned at offset zero.
+	ErrOutputPosition = errors.New("output is not positioned at offset zero")
+	// ErrInvalidOutputTarget means the file output path names a directory.
+	ErrInvalidOutputTarget = errors.New("invalid file output target")
 	// ErrEntryNotFound means the entry is not found.
 	ErrEntryNotFound = errors.New("entry not found")
 	// ErrClosed means the reader or resource is already closed.

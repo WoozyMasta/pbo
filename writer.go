@@ -9,10 +9,12 @@ import (
 	"context"
 	"crypto/sha1" //nolint:gosec // Signature format requires SHA1.
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"hash"
 	"io"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -105,77 +107,67 @@ func encodeHeaderSection(header []byte, headers []HeaderPair) []byte {
 }
 
 // Pack writes a PBO to out from the given inputs.
-// Inputs are sorted by path for deterministic output.
+// Inputs are sorted by path for deterministic output. The archive starts at offset zero;
+// truncatable outputs are reset before writing, and other outputs must be empty at offset zero.
+// On success, the output position is at the end of the archive.
 func Pack(ctx context.Context, out io.WriteSeeker, inputs []Input, opts PackOptions) (*PackResult, error) {
-	if len(inputs) == 0 {
-		return nil, ErrEmptyInputs
-	}
-
-	opts.applyDefaults()
-
-	rewritePlan, err := preparePackRewritePlan(inputs)
+	rewritePlan, opts, err := preparePackRequest(inputs, opts)
 	if err != nil {
 		return nil, err
 	}
+	if err := preparePackOutput(out); err != nil {
+		return nil, err
+	}
 
-	return rewriteArchive(ctx, out, nil, rewritePlan, opts)
+	result, err := rewriteArchive(ctx, out, nil, rewritePlan, opts)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := out.Seek(0, io.SeekEnd); err != nil {
+		return nil, fmt.Errorf("seek end after pack: %w", err)
+	}
+
+	return result, nil
 }
 
 // PackFile writes a PBO to outPath and appends a SHA1 trailer.
 func PackFile(ctx context.Context, outPath string, inputs []Input, opts PackOptions) (*PackResult, error) {
-	if len(inputs) == 0 {
-		return nil, ErrEmptyInputs
-	}
-	opts.applyDefaults()
-	rewritePlan, err := preparePackRewritePlan(inputs)
+	rewritePlan, opts, err := preparePackRequest(inputs, opts)
 	if err != nil {
-		return nil, err
-	}
-	if err := validateHeaderProperties(opts.Headers); err != nil {
 		return nil, err
 	}
 
-	f, err := os.OpenFile(outPath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o600)
-	if err != nil {
-		return nil, fmt.Errorf("create PBO file: %w", err)
-	}
-	defer func() {
-		if f != nil {
-			_ = f.Close()
+	var result *PackResult
+	err = writePackFileAtomically(outPath, func(f *os.File) error {
+		details, err := rewriteArchiveDetailed(ctx, f, nil, rewritePlan, opts)
+		if err != nil {
+			return err
 		}
-	}()
 
-	details, err := rewriteArchiveDetailed(ctx, f, nil, rewritePlan, opts)
+		fileEnd, err := f.Seek(0, io.SeekEnd)
+		if err != nil {
+			return fmt.Errorf("seek end for trailer: %w", err)
+		}
+
+		hash1, err := computeHash1ForFile(details, f, fileEnd, opts.SealedKey)
+		if err != nil {
+			return fmt.Errorf("compute SHA1 trailer: %w", err)
+		}
+
+		var trailer [21]byte
+		copy(trailer[1:], hash1)
+		if _, err := f.WriteAt(trailer[:], fileEnd); err != nil {
+			return fmt.Errorf("write SHA1 trailer: %w", err)
+		}
+		result = details.packResult
+
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
 
-	fileEnd, err := f.Seek(0, io.SeekEnd)
-	if err != nil {
-		return nil, fmt.Errorf("seek end for trailer: %w", err)
-	}
-
-	hash1, err := computeHash1ForFile(details, f, fileEnd, opts.SealedKey)
-	if err != nil {
-		return nil, fmt.Errorf("compute SHA1 trailer: %w", err)
-	}
-
-	var trailer [21]byte
-	copy(trailer[1:], hash1)
-	if _, err := f.WriteAt(trailer[:], fileEnd); err != nil {
-		return nil, fmt.Errorf("write SHA1 trailer: %w", err)
-	}
-
-	if err := f.Sync(); err != nil {
-		return nil, fmt.Errorf("sync PBO file: %w", err)
-	}
-
-	if err := f.Close(); err != nil {
-		return nil, fmt.Errorf("close PBO file: %w", err)
-	}
-	f = nil
-
-	return details.packResult, nil
+	return result, nil
 }
 
 // PackAndHash writes a PBO to out and calculates hash set over written bytes.
@@ -203,15 +195,13 @@ func PackAndHash(
 		return nil, hs, err
 	}
 
-	if len(inputs) == 0 {
-		return nil, hs, ErrEmptyInputs
-	}
-
-	opts.applyDefaults()
 	opts.signHashVersion = signVersion
 	opts.signHashGameType = gameType
-	rewritePlan, err := preparePackRewritePlan(inputs)
+	rewritePlan, opts, err := preparePackRequest(inputs, opts)
 	if err != nil {
+		return nil, hs, err
+	}
+	if err := preparePackOutput(out); err != nil {
 		return nil, hs, err
 	}
 
@@ -260,82 +250,223 @@ func PackAndHashFile(
 ) (*PackResult, HashSet, error) {
 	var hs HashSet
 
-	if len(inputs) == 0 {
-		return nil, hs, ErrEmptyInputs
-	}
 	if err := validateSignHashArgs(signVersion, gameType); err != nil {
 		return nil, hs, err
+	}
+
+	opts.signHashVersion = signVersion
+	opts.signHashGameType = gameType
+	rewritePlan, opts, err := preparePackRequest(inputs, opts)
+	if err != nil {
+		return nil, hs, err
+	}
+
+	var result *PackResult
+	err = writePackFileAtomically(outPath, func(f *os.File) error {
+		details, err := rewriteArchiveDetailed(ctx, f, nil, rewritePlan, opts)
+		if err != nil {
+			return err
+		}
+
+		fileEnd, err := f.Seek(0, io.SeekEnd)
+		if err != nil {
+			return fmt.Errorf("seek end for hash: %w", err)
+		}
+
+		hash1, err := computeHash1ForFile(details, f, fileEnd, opts.SealedKey)
+		if err != nil {
+			return fmt.Errorf("hash1: %w", err)
+		}
+
+		nameHash := computeSignNameHash(details.entries)
+		fileHash := details.fileHash
+		if fileHash == nil {
+			fileHash, err = computeSignFileHashFromReaderAt(f, details.entries, signVersion, gameType)
+			if err != nil {
+				return fmt.Errorf("file hash: %w", err)
+			}
+		}
+
+		prefix := pboPrefixFromHeaders(details.headers)
+		copy(hs.Hash1[:], hash1)
+		copy(hs.Hash2[:], computeSignHash2(hash1, nameHash, prefix))
+		copy(hs.Hash3[:], computeSignHash3(fileHash, nameHash, prefix))
+
+		var trailer [21]byte
+		copy(trailer[1:], hash1)
+		if _, err := f.WriteAt(trailer[:], fileEnd); err != nil {
+			return fmt.Errorf("write SHA1 trailer: %w", err)
+		}
+		result = details.packResult
+
+		return nil
+	})
+	if err != nil {
+		return nil, hs, err
+	}
+
+	return result, hs, nil
+}
+
+// preparePackRequest validates options and inputs before any output is changed.
+func preparePackRequest(inputs []Input, opts PackOptions) ([]rewriteEntry, PackOptions, error) {
+	if len(inputs) == 0 {
+		return nil, opts, ErrEmptyInputs
 	}
 
 	opts.applyDefaults()
 	rewritePlan, err := preparePackRewritePlan(inputs)
 	if err != nil {
-		return nil, hs, err
+		return nil, opts, err
 	}
 	if err := validateHeaderProperties(opts.Headers); err != nil {
-		return nil, hs, err
+		return nil, opts, err
+	}
+	if err := validateRewritePlanPaths(rewritePlan); err != nil {
+		return nil, opts, err
+	}
+	if _, err := newCompressMatcher(opts.Compress, opts.CompressMatcherOptions); err != nil {
+		return nil, opts, fmt.Errorf("compile compress rules: %w", err)
 	}
 
-	f, err := os.OpenFile(outPath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o600)
-	if err != nil {
-		return nil, hs, fmt.Errorf("create PBO file: %w", err)
+	return rewritePlan, opts, nil
+}
+
+// preparePackOutput resets truncatable outputs or verifies other outputs are empty at offset zero.
+func preparePackOutput(out io.WriteSeeker) error {
+	if out == nil {
+		return ErrNilWriter
 	}
+
+	position, err := out.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return fmt.Errorf("read output position: %w", err)
+	}
+
+	if truncater, ok := out.(interface{ Truncate(int64) error }); ok {
+		if _, err := out.Seek(0, io.SeekStart); err != nil {
+			return fmt.Errorf("seek output start: %w", err)
+		}
+		if err := truncater.Truncate(0); err != nil {
+			return fmt.Errorf("truncate output: %w", err)
+		}
+		if _, err := out.Seek(0, io.SeekStart); err != nil {
+			return fmt.Errorf("rewind truncated output: %w", err)
+		}
+
+		return nil
+	}
+
+	if position != 0 {
+		return fmt.Errorf("output position %d: %w", position, ErrOutputPosition)
+	}
+
+	end, err := out.Seek(0, io.SeekEnd)
+	if err != nil {
+		return fmt.Errorf("check output size: %w", err)
+	}
+	if end != 0 {
+		_, restoreErr := out.Seek(position, io.SeekStart)
+		return errors.Join(ErrOutputNotEmpty, restoreErr)
+	}
+	if _, err := out.Seek(0, io.SeekStart); err != nil {
+		return fmt.Errorf("rewind empty output: %w", err)
+	}
+
+	return nil
+}
+
+// writePackFileAtomically builds a complete temporary archive before replacing the target.
+func writePackFileAtomically(outPath string, build func(*os.File) error) (resultErr error) {
+	directory := filepath.Dir(outPath)
+	pattern := "." + filepath.Base(outPath) + ".tmp-*"
+	tempFile, err := os.CreateTemp(directory, pattern)
+	if err != nil {
+		return fmt.Errorf("create temporary PBO file: %w", err)
+	}
+
+	tempPath := tempFile.Name()
+	installed := false
 	defer func() {
-		if f != nil {
-			_ = f.Close()
+		if tempFile != nil {
+			resultErr = errors.Join(resultErr, tempFile.Close())
+		}
+		if installed {
+			return
+		}
+		if err := os.Remove(tempPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			resultErr = errors.Join(resultErr, fmt.Errorf("remove temporary PBO file: %w", err))
 		}
 	}()
 
-	opts.signHashVersion = signVersion
-	opts.signHashGameType = gameType
-
-	details, err := rewriteArchiveDetailed(ctx, f, nil, rewritePlan, opts)
-	if err != nil {
-		return nil, hs, err
+	if err := build(tempFile); err != nil {
+		return fmt.Errorf("write temporary PBO file: %w", err)
+	}
+	if err := tempFile.Sync(); err != nil {
+		return fmt.Errorf("sync temporary PBO file: %w", err)
+	}
+	if err := tempFile.Close(); err != nil {
+		tempFile = nil
+		return fmt.Errorf("close temporary PBO file: %w", err)
 	}
 
-	fileEnd, err := f.Seek(0, io.SeekEnd)
-	if err != nil {
-		return nil, hs, fmt.Errorf("seek end for hash: %w", err)
+	tempFile = nil
+	if err := replaceOutputFile(tempPath, outPath); err != nil {
+		return err
 	}
 
-	hash1, err := computeHash1ForFile(details, f, fileEnd, opts.SealedKey)
+	installed = true
+	return nil
+}
+
+// replaceOutputFile swaps a complete temporary file into place and restores the old target on failure.
+func replaceOutputFile(tempPath string, outPath string) error {
+	info, err := os.Lstat(outPath)
+	if errors.Is(err, os.ErrNotExist) {
+		if err := os.Rename(tempPath, outPath); err != nil {
+			return fmt.Errorf("install PBO file: %w", err)
+		}
+		return nil
+	}
 	if err != nil {
-		return nil, hs, fmt.Errorf("hash1: %w", err)
+		return fmt.Errorf("inspect existing PBO file: %w", err)
 	}
 
-	nameHash := computeSignNameHash(details.entries)
-
-	// Use inline file hash from pack when available; fall back to re-read for sealed PBOs.
-	fileHash := details.fileHash
-	if fileHash == nil {
-		fileHash, err = computeSignFileHashFromReaderAt(f, details.entries, signVersion, gameType)
-		if err != nil {
-			return nil, hs, fmt.Errorf("file hash: %w", err)
+	if info.IsDir() {
+		return fmt.Errorf("output path %q: %w", outPath, ErrInvalidOutputTarget)
+	}
+	if info.Mode().IsRegular() {
+		if err := os.Chmod(tempPath, info.Mode().Perm()); err != nil {
+			return fmt.Errorf("preserve PBO file permissions: %w", err)
 		}
 	}
 
-	prefix := pboPrefixFromHeaders(details.headers)
-	copy(hs.Hash1[:], hash1)
-	copy(hs.Hash2[:], computeSignHash2(hash1, nameHash, prefix))
-	copy(hs.Hash3[:], computeSignHash3(fileHash, nameHash, prefix))
-
-	var trailer [21]byte
-	copy(trailer[1:], hash1)
-	if _, err := f.WriteAt(trailer[:], fileEnd); err != nil {
-		return nil, hs, fmt.Errorf("write SHA1 trailer: %w", err)
+	backupFile, err := os.CreateTemp(filepath.Dir(outPath), "."+filepath.Base(outPath)+".bak-*")
+	if err != nil {
+		return fmt.Errorf("reserve output backup: %w", err)
+	}
+	backupPath := backupFile.Name()
+	if err := backupFile.Close(); err != nil {
+		_ = os.Remove(backupPath)
+		return fmt.Errorf("close output backup placeholder: %w", err)
 	}
 
-	if err := f.Sync(); err != nil {
-		return nil, hs, fmt.Errorf("sync PBO file: %w", err)
+	if err := os.Rename(outPath, backupPath); err != nil {
+		cleanupErr := os.Remove(backupPath)
+		return errors.Join(fmt.Errorf("move old PBO to backup: %w", err), cleanupErr)
+	}
+	if err := os.Rename(tempPath, outPath); err != nil {
+		restoreErr := os.Rename(backupPath, outPath)
+		if restoreErr != nil {
+			return fmt.Errorf("install new PBO: %w (old PBO remains at %q; restore failed: %v)", err, backupPath, restoreErr)
+		}
+		return fmt.Errorf("install new PBO: %w", err)
+	}
+	if err := os.Remove(backupPath); err != nil {
+		return fmt.Errorf("remove previous PBO backup %q: %w", backupPath, err)
 	}
 
-	if err := f.Close(); err != nil {
-		return nil, hs, fmt.Errorf("close PBO file: %w", err)
-	}
-	f = nil
-
-	return details.packResult, hs, nil
+	return nil
 }
 
 // acquirePackWriter returns a buffered writer and release callback for Pack.

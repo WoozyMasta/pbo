@@ -24,6 +24,10 @@ and this project adheres to [Semantic Versioning][].
 
 ### Changed
 
+* Generic packing now resets truncatable outputs
+  and rejects non-empty non-truncatable outputs;
+  file packing replaces destinations only after the complete archive
+  and SHA1 trailer have been written successfully.
 * `Reader.Entries`, `EntriesView`, path lookup and default extraction
   now use raw archive entries.
   Filtering and sanitization are explicit through `Reader.EntriesWithOptions`;

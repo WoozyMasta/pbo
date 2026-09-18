@@ -53,7 +53,12 @@ Entry order is deterministic. Compression candidates are chosen by path rules
 and stored compressed only when compression reduces their size.
 [PackOptions.MaxCompressSize] bounds candidate buffering;
 larger inputs are written without compression.
+[Pack] writes from offset zero, truncating outputs that support `Truncate(int64)`.
+Other seekable outputs must be empty and positioned at zero.
+Successful generic writes leave the output positioned at the archive end.
 [PackFile] appends a SHA1 trailer.
+File-based pack operations stage the complete archive
+in the destination directory before replacing an existing file.
 
 [OpenEditor] stages additions, replacements, and deletions,
 then applies them as one archive rewrite with [Editor.Commit].
