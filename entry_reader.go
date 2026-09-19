@@ -5,6 +5,7 @@
 package pbo
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"math"
@@ -113,13 +114,58 @@ func (r *Reader) OpenEntryInfo(info EntryInfo) (io.ReadCloser, error) {
 
 // ReadEntry reads full (decompressed) content of the named entry.
 func (r *Reader) ReadEntry(name string) ([]byte, error) {
-	rc, err := r.OpenEntry(name)
-	if err != nil {
-		return nil, err
+	if r == nil || r.ra == nil {
+		return nil, ErrNilReader
 	}
-	defer func() { _ = rc.Close() }()
 
-	return io.ReadAll(rc)
+	r.mu.Lock()
+	closed := r.closed
+	r.mu.Unlock()
+	if closed {
+		return nil, ErrClosed
+	}
+
+	info := r.findEntryByName(name)
+	if info == nil {
+		return nil, fmt.Errorf("%w: %s", ErrEntryNotFound, name)
+	}
+
+	return r.readEntryByInfo(info, name)
+}
+
+// readEntryByInfo reads one complete entry into a size-bounded memory buffer.
+func (r *Reader) readEntryByInfo(info *EntryInfo, name string) ([]byte, error) {
+	sr := io.NewSectionReader(r.ra, int64(info.Offset), int64(info.DataSize))
+	if !info.IsCompressed() {
+		outLen, err := checkedUint32ToInt(info.DataSize)
+		if err != nil {
+			return nil, fmt.Errorf("resolve input size for %s: %w", name, err)
+		}
+
+		data := make([]byte, outLen)
+		if _, err := io.ReadFull(sr, data); err != nil {
+			return nil, fmt.Errorf("read entry %s: %w", name, err)
+		}
+
+		return data, nil
+	}
+
+	outLen, err := checkedUint32ToInt(info.OriginalSize)
+	if err != nil {
+		return nil, fmt.Errorf("resolve output size for %s: %w", name, err)
+	}
+
+	// The decoder writes bounded chunks into this exact-capacity buffer, avoiding
+	// both pipe coordination and repeated growth from io.ReadAll.
+	data := bytes.NewBuffer(make([]byte, 0, outLen))
+	if _, err := lzss.DecompressToWriter(data, sr, outLen, nil); err != nil {
+		return nil, fmt.Errorf("decompress entry %s: %w", name, err)
+	}
+	if data.Len() != outLen {
+		return nil, fmt.Errorf("decompress entry %s: output size %d, want %d", name, data.Len(), outLen)
+	}
+
+	return data.Bytes(), nil
 }
 
 // streamDecompressEntry decodes one compressed entry stream into pipe writer.

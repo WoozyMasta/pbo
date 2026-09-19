@@ -24,6 +24,8 @@ and this project adheres to [Semantic Versioning][].
 
 ### Changed
 
+* `ReadEntry` now reads raw payloads into one exact-size allocation
+  and decodes compressed payloads directly into a pre-sized buffer.
 * Generic packing now resets truncatable outputs
   and rejects non-empty non-truncatable outputs;
   file packing replaces destinations only after the complete archive
