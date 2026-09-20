@@ -6,29 +6,6 @@ package pbo
 
 import "testing"
 
-func TestFilterEntriesBySize(t *testing.T) {
-	t.Parallel()
-
-	entries := []EntryInfo{
-		{Path: "a.txt", DataSize: 4, OriginalSize: 4},
-		{Path: "b.txt", DataSize: 5, OriginalSize: 12},
-		{Path: "c.txt", DataSize: 12, OriginalSize: 0},
-	}
-
-	filtered := filterEntriesBySize(entries, 12, 5)
-	if len(filtered) != 2 {
-		t.Fatalf("len(filtered)=%d, want 2", len(filtered))
-	}
-
-	if filtered[0].Path != "b.txt" {
-		t.Fatalf("filtered[0].Path=%q, want b.txt", filtered[0].Path)
-	}
-
-	if filtered[1].Path != "c.txt" {
-		t.Fatalf("filtered[1].Path=%q, want c.txt", filtered[1].Path)
-	}
-}
-
 func TestEntriesWithOptions_SizeFilter(t *testing.T) {
 	t.Parallel()
 
@@ -54,6 +31,35 @@ func TestEntriesWithOptions_SizeFilter(t *testing.T) {
 
 	if entries[0].Path != "big.txt" {
 		t.Fatalf("entries[0].Path=%q, want big.txt", entries[0].Path)
+	}
+}
+
+func TestEntriesWithOptions_PrefixFilter(t *testing.T) {
+	t.Parallel()
+
+	path := createManualPBOWithNamedEntries(t, []manualEntry{
+		{name: `data\a.txt`, data: []byte("A")},
+		{name: `data\sub\b.txt`, data: []byte("B")},
+		{name: `scripts\c.txt`, data: []byte("C")},
+	})
+	r, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = r.Close() }()
+
+	entries, err := r.EntriesWithOptions(EntryViewOptions{PathPrefix: "data"})
+	if err != nil {
+		t.Fatalf("EntriesWithOptions: %v", err)
+	}
+	want := []string{`data\a.txt`, `data\sub\b.txt`}
+	if len(entries) != len(want) {
+		t.Fatalf("entry count=%d, want %d", len(entries), len(want))
+	}
+	for i := range want {
+		if entries[i].Path != want[i] {
+			t.Errorf("entries[%d].Path=%q, want %q", i, entries[i].Path, want[i])
+		}
 	}
 }
 
@@ -84,53 +90,6 @@ func TestEntriesWithOptions_SizeFilterAndSanitize(t *testing.T) {
 
 	if entries[0].Path != "big.txt" {
 		t.Fatalf("entries[0].Path=%q, want big.txt", entries[0].Path)
-	}
-}
-
-func TestFilterEntriesByPrefix(t *testing.T) {
-	t.Parallel()
-
-	entries := []EntryInfo{
-		{Path: "data/a.txt"},
-		{Path: "data/sub/b.txt"},
-		{Path: "scripts/c.txt"},
-	}
-
-	filtered := filterEntriesByPrefix(entries, "data")
-	if len(filtered) != 2 {
-		t.Fatalf("len(filtered)=%d, want 2", len(filtered))
-	}
-
-	if filtered[0].Path != "data/a.txt" {
-		t.Fatalf("filtered[0].Path=%q, want data/a.txt", filtered[0].Path)
-	}
-
-	if filtered[1].Path != "data/sub/b.txt" {
-		t.Fatalf("filtered[1].Path=%q, want data/sub/b.txt", filtered[1].Path)
-	}
-}
-
-func TestFilterEntriesByASCIIOnly(t *testing.T) {
-	t.Parallel()
-
-	entries := []EntryInfo{
-		{Path: "scripts/main.c"},
-		{Path: "scripts/тест.c"},
-		{Path: "data/ábc.txt"},
-		{Path: "config.cpp"},
-	}
-
-	filtered := filterEntriesByASCIIOnly(entries)
-	if len(filtered) != 2 {
-		t.Fatalf("len(filtered)=%d, want 2", len(filtered))
-	}
-
-	if filtered[0].Path != "scripts/main.c" {
-		t.Fatalf("filtered[0].Path=%q, want scripts/main.c", filtered[0].Path)
-	}
-
-	if filtered[1].Path != "config.cpp" {
-		t.Fatalf("filtered[1].Path=%q, want config.cpp", filtered[1].Path)
 	}
 }
 
@@ -223,19 +182,5 @@ func TestEntriesWithOptions_SanitizePrefixFilter_ObfuscatedSpacesAndGUID(t *test
 
 	if entries[0].Path != "scripts/4_world/nLhotvu0/_{22877a6d-37a1-461a-91b0-dbda5aaebc99}/_COM2.c" {
 		t.Fatalf("entries[0].Path=%q, want scripts/4_world/nLhotvu0/_{22877a6d-37a1-461a-91b0-dbda5aaebc99}/_COM2.c", entries[0].Path)
-	}
-}
-
-func TestFilterEntriesBySanitizedPrefix_EmptyPrefix(t *testing.T) {
-	t.Parallel()
-
-	entries := []EntryInfo{
-		{Path: `scripts\4_world\ nLhotvu0 \  .{22877a6d-37a1-461a-91b0-dbda5aaebc99}\COM2.c`},
-		{Path: `scripts\4_world\ other \  .{22877a6d-37a1-461a-91b0-dbda5aaebc99}\COM2.c`},
-	}
-
-	filtered := filterEntriesBySanitizedPrefix(entries, "")
-	if len(filtered) != len(entries) {
-		t.Fatalf("len(filtered)=%d, want %d", len(filtered), len(entries))
 	}
 }

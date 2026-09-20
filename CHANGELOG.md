@@ -24,6 +24,8 @@ and this project adheres to [Semantic Versioning][].
 
 ### Changed
 
+* Sanitized entry views now combine filtering and path rewriting into one pass;
+  long Unicode path segments keep valid UTF-8 when shortened.
 * `ReadEntry` now reads raw payloads into one exact-size allocation
   and decodes compressed payloads directly into a pre-sized buffer.
 * Generic packing now resets truncatable outputs

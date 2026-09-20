@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestSanitizePathSegment(t *testing.T) {
@@ -104,6 +105,63 @@ func TestSanitizeEntryInfoPathsCollision(t *testing.T) {
 	}
 	if got[1].Path != "a_b~2.txt" {
 		t.Fatalf("got[1]=%q, want a_b~2.txt", got[1].Path)
+	}
+}
+
+func TestSanitizeEntryInfoPathsCollisionAfterSuffix(t *testing.T) {
+	t.Parallel()
+
+	entries := []EntryInfo{
+		{Path: "a:b.txt"},
+		{Path: "a?b.txt"},
+		{Path: "a_b~2.txt"},
+	}
+
+	got, err := sanitizeEntryInfoPaths(entries)
+	if err != nil {
+		t.Fatalf("sanitizeEntryInfoPaths: %v", err)
+	}
+	want := []string{"a_b.txt", "a_b~2.txt", "a_b~2~2.txt"}
+	for i := range want {
+		if got[i].Path != want[i] {
+			t.Errorf("got[%d].Path=%q, want %q", i, got[i].Path, want[i])
+		}
+	}
+}
+
+func TestSanitizePath_LongUnicodeSegmentKeepsRuneBoundary(t *testing.T) {
+	t.Parallel()
+
+	segment := strings.Repeat("界", 100)
+	got, err := sanitizePathSegment(segment)
+	if err != nil {
+		t.Fatalf("sanitizePathSegment: %v", err)
+	}
+	if len(got) > maxSanitizedSegmentLen {
+		t.Fatalf("segment length=%d, want <= %d", len(got), maxSanitizedSegmentLen)
+	}
+	if !utf8.ValidString(got) {
+		t.Fatalf("sanitized segment is not valid UTF-8: %q", got)
+	}
+	if again := shortenSegmentDeterministic(segment, maxSanitizedSegmentLen); got != again {
+		t.Fatalf("sanitization=%q, direct shortening=%q", got, again)
+	}
+}
+
+func TestSanitizePath_InvalidUTF8IsDeterministic(t *testing.T) {
+	t.Parallel()
+
+	pathValue := string([]byte{'n', 'a', 'm', 'e', 0xff, '.', 't', 'x', 't'})
+	first, err := SanitizePath(pathValue)
+	if err != nil {
+		t.Fatalf("SanitizePath: %v", err)
+	}
+	second, err := SanitizePath(pathValue)
+	if err != nil {
+		t.Fatalf("SanitizePath second call: %v", err)
+	}
+	if first != "name_.txt" || second != first {
+		t.Fatalf("SanitizePath results=%q and %q, want deterministic %q", first, second, "name_.txt")
 	}
 }
 

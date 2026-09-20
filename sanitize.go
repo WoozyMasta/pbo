@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 const (
@@ -107,17 +108,7 @@ func sanitizeEntryInfoPaths(entries []EntryInfo) ([]EntryInfo, error) {
 	nextSuffix := make(map[string]int, len(entries))
 
 	for i := range entries {
-		relativePath := entries[i].Path
-		normalizedPath, err := normalizeExtractEntryPath(entries[i].Path)
-		if err == nil {
-			relativePath = normalizedPath
-		} else {
-			// Keep sanitize resilient for mangled/obfuscated names:
-			// convert slash style and sanitize segment-by-segment instead of failing hard.
-			relativePath = strings.ReplaceAll(relativePath, `\`, `/`)
-		}
-
-		sanitized, err := sanitizeRelativePath(relativePath)
+		sanitized, err := sanitizeEntryInfoPath(entries[i].Path, sanitizePathSegment)
 		if err != nil {
 			return nil, fmt.Errorf("sanitize path %s: %w", entries[i].Path, err)
 		}
@@ -138,28 +129,53 @@ func sanitizeEntryInfoPaths(entries []EntryInfo) ([]EntryInfo, error) {
 	return out, nil
 }
 
-// sanitizeEntryInfoControlPaths rewrites control/format runes in entry paths.
+// sanitizeEntryInfoPathsWithPrefix builds a sanitized view while filtering the same sanitized names.
+func sanitizeEntryInfoPathsWithPrefix(entries []EntryInfo, prefix string) ([]EntryInfo, error) {
+	prefixWithSlash := prefix + "/"
+	out := make([]EntryInfo, 0)
+	var used map[string]struct{}
+	var nextSuffix map[string]int
+
+	for i := range entries {
+		sanitized, err := sanitizeEntryInfoPath(entries[i].Path, sanitizePathSegment)
+		if err != nil {
+			return nil, fmt.Errorf("sanitize path %s: %w", entries[i].Path, err)
+		}
+		if sanitized != prefix && !strings.HasPrefix(sanitized, prefixWithSlash) {
+			continue
+		}
+
+		if used == nil {
+			used = make(map[string]struct{})
+			nextSuffix = make(map[string]int)
+		}
+		sanitized, err = makeSanitizedPathUnique(sanitized, used, nextSuffix)
+		if err != nil {
+			return nil, fmt.Errorf("sanitize path %s: %w", entries[i].Path, err)
+		}
+		if _, err := normalizeExtractEntryPath(sanitized); err != nil {
+			return nil, fmt.Errorf("sanitize path %s: %w", entries[i].Path, err)
+		}
+
+		entry := entries[i]
+		entry.Path = sanitized
+		out = append(out, entry)
+	}
+
+	return out, nil
+}
+
+// sanitizeEntryInfoControlPaths rewrites control and format runes in entry paths.
 func sanitizeEntryInfoControlPaths(entries []EntryInfo) ([]EntryInfo, error) {
 	out := make([]EntryInfo, len(entries))
 	used := make(map[string]struct{}, len(entries))
 	nextSuffix := make(map[string]int, len(entries))
 
 	for i := range entries {
-		relativePath := entries[i].Path
-		normalizedPath, err := normalizeExtractEntryPath(entries[i].Path)
-		if err == nil {
-			relativePath = normalizedPath
-		} else {
-			// Keep sanitize resilient for mangled/obfuscated names:
-			// convert slash style and sanitize segment-by-segment instead of failing hard.
-			relativePath = strings.ReplaceAll(relativePath, `\`, `/`)
-		}
-
-		sanitized, err := sanitizeRelativePathWith(relativePath, sanitizeControlCharPathSegment)
+		sanitized, err := sanitizeEntryInfoPath(entries[i].Path, sanitizeControlCharPathSegment)
 		if err != nil {
 			return nil, fmt.Errorf("sanitize path %s: %w", entries[i].Path, err)
 		}
-
 		sanitized, err = makeSanitizedPathUnique(sanitized, used, nextSuffix)
 		if err != nil {
 			return nil, fmt.Errorf("sanitize path %s: %w", entries[i].Path, err)
@@ -170,6 +186,27 @@ func sanitizeEntryInfoControlPaths(entries []EntryInfo) ([]EntryInfo, error) {
 	}
 
 	return out, nil
+}
+
+// sanitizeEntryInfoPath normalizes a raw path when safe and otherwise sanitizes its raw segments.
+func sanitizeEntryInfoPath(pathValue string, sanitizeSegment func(string) (string, error)) (string, error) {
+	var relativePath string
+	if isCanonicalArchivePath(pathValue) && !hasWindowsAbsBackslashPrefix(pathValue) {
+		relativePath = strings.ReplaceAll(pathValue, `\`, "/")
+	} else if normalizedPath, err := normalizeExtractEntryPath(pathValue); err == nil {
+		relativePath = normalizedPath
+	} else {
+		// Obfuscated names remain listable by sanitizing their segments without traversal semantics.
+		relativePath = strings.ReplaceAll(pathValue, `\`, "/")
+	}
+
+	return sanitizeRelativePathWith(relativePath, sanitizeSegment)
+}
+
+// hasWindowsAbsBackslashPrefix reports drive-root paths that otherwise look canonical.
+func hasWindowsAbsBackslashPrefix(pathValue string) bool {
+	return len(pathValue) >= 3 && isASCIIAlpha(pathValue[0]) &&
+		pathValue[1] == ':' && pathValue[2] == '\\'
 }
 
 // sanitizeRelativePath sanitizes each segment of relative slash-separated path.
@@ -401,13 +438,34 @@ func shortenSegmentDeterministic(value string, maxLen int) string {
 		return value
 	}
 	if maxLen <= 10 {
-		return value[:maxLen]
+		prefixLen := safeUTF8PrefixLen(value, maxLen)
+		if prefixLen == 0 && maxLen > 0 {
+			return "_"
+		}
+
+		return value[:prefixLen]
 	}
 
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(value))
 	hashPart := fmt.Sprintf("~%08x", h.Sum32())
-	prefixLen := max(maxLen-len(hashPart), 1)
+	prefixLen := safeUTF8PrefixLen(value, maxLen-len(hashPart))
 
 	return value[:prefixLen] + hashPart
+}
+
+// safeUTF8PrefixLen returns a byte limit backed up to a UTF-8 rune boundary.
+func safeUTF8PrefixLen(value string, maxLen int) int {
+	if maxLen <= 0 {
+		return 0
+	}
+	if maxLen >= len(value) {
+		return len(value)
+	}
+
+	for maxLen > 0 && !utf8.RuneStart(value[maxLen]) {
+		maxLen--
+	}
+
+	return maxLen
 }

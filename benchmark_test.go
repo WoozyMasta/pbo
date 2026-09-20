@@ -142,6 +142,43 @@ func BenchmarkListLargeIndex(b *testing.B) {
 	}
 }
 
+func BenchmarkEntriesWithOptionsSanitizedLargeIndex(b *testing.B) {
+	path := createBenchLargeIndexPBO(b, benchLargeIndexEntries)
+	r, err := Open(path)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer func() { _ = r.Close() }()
+
+	benchmarks := []struct {
+		name string
+		opts EntryViewOptions
+	}{
+		{name: "list", opts: EntryViewOptions{SanitizeNames: true}},
+		{
+			name: "query",
+			opts: EntryViewOptions{
+				SanitizeNames: true,
+				PathPrefix:    benchmarkLargePath(0),
+			},
+		},
+	}
+
+	for _, benchmark := range benchmarks {
+		b.Run(benchmark.name, func(b *testing.B) {
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				entries, err := r.EntriesWithOptions(benchmark.opts)
+				if err != nil {
+					b.Fatal(err)
+				}
+				benchListSink = len(entries)
+			}
+		})
+	}
+}
+
 func BenchmarkLookupEntryLinearLargeIndex(b *testing.B) {
 	path := createBenchLargeIndexPBO(b, benchLargeIndexEntries)
 	r, err := Open(path)

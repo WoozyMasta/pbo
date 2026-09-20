@@ -109,6 +109,33 @@ func TestReaderRawEntriesPreserveDuplicateAndInvalidUTF8Paths(t *testing.T) {
 	}
 }
 
+func TestEntryView_CombinedSanitizationPreservesNamesAndProvenance(t *testing.T) {
+	t.Parallel()
+
+	entries := []EntryInfo{
+		{Path: "a\x1bb.txt", Offset: 10},
+		{Path: "a_b.txt", Offset: 20},
+		{Path: "a?b.txt", Offset: 30},
+	}
+	got, err := applyEntryViewOptions(entries, EntryViewOptions{
+		SanitizeControlChars: true,
+		SanitizeNames:        true,
+	})
+	if err != nil {
+		t.Fatalf("applyEntryViewOptions: %v", err)
+	}
+
+	wantPaths := []string{"a_b.txt", "a_b~2.txt", "a_b~3.txt"}
+	for i := range wantPaths {
+		if got[i].Path != wantPaths[i] {
+			t.Errorf("got[%d].Path=%q, want %q", i, got[i].Path, wantPaths[i])
+		}
+		if got[i].Offset != entries[i].Offset {
+			t.Errorf("got[%d].Offset=%d, want %d", i, got[i].Offset, entries[i].Offset)
+		}
+	}
+}
+
 func TestArchiveLookupKeyFoldsASCIIOnly(t *testing.T) {
 	t.Parallel()
 
