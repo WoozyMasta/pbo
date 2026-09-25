@@ -192,6 +192,56 @@ func TestOpen_TrailerDetectionDoesNotHashPayload(t *testing.T) {
 	}
 }
 
+func TestReadHeaders_SealedDoesNotReadPayload(t *testing.T) {
+	t.Parallel()
+
+	const payloadSize = 4 << 20
+	payload := bytes.Repeat([]byte{0x5a}, payloadSize)
+	input := []Input{{
+		Path: "payload.bin",
+		Open: func() (io.ReadCloser, error) {
+			return io.NopCloser(bytes.NewReader(payload)), nil
+		},
+	}}
+	packOpts := PackOptions{Headers: []HeaderPair{{Key: PropertyPrefix, Value: "test\\mod"}}}
+	plainPath := filepath.Join(t.TempDir(), "plain-headers.pbo")
+	if _, err := PackFile(context.Background(), plainPath, input, packOpts); err != nil {
+		t.Fatalf("PackFile plain: %v", err)
+	}
+	key := sealedTestKey()
+	sealedOpts := packOpts
+	sealedOpts.SealedKey = &key
+	sealedPath := filepath.Join(t.TempDir(), "sealed-headers.pbo")
+	if _, err := PackFile(context.Background(), sealedPath, input, sealedOpts); err != nil {
+		t.Fatalf("PackFile sealed: %v", err)
+	}
+
+	plainData, err := os.ReadFile(plainPath)
+	if err != nil {
+		t.Fatalf("ReadFile plain: %v", err)
+	}
+	sealedData, err := os.ReadFile(sealedPath)
+	if err != nil {
+		t.Fatalf("ReadFile sealed: %v", err)
+	}
+	plainHeaders, err := ReadHeadersFromReaderAt(bytes.NewReader(plainData), int64(len(plainData)))
+	if err != nil {
+		t.Fatalf("ReadHeaders plain: %v", err)
+	}
+	counted := &byteCountingReaderAt{reader: bytes.NewReader(sealedData)}
+	sealedHeaders, err := ReadHeadersFromReaderAtWithOptions(counted, int64(len(sealedData)), ReaderOptions{SealedKey: &key})
+	if err != nil {
+		t.Fatalf("ReadHeaders sealed: %v", err)
+	}
+	if !equalHeaderPairs(plainHeaders, sealedHeaders) {
+		t.Fatalf("sealed headers = %#v, want plain headers %#v", sealedHeaders, plainHeaders)
+	}
+	t.Logf("sealed header read consumed %d of %d archive bytes", counted.bytesRead, len(sealedData))
+	if counted.bytesRead >= int64(payloadSize)/2 {
+		t.Fatalf("sealed header read consumed %d bytes for a %d-byte payload", counted.bytesRead, payloadSize)
+	}
+}
+
 // byteCountingReaderAt records total bytes read by ReaderAt calls.
 type byteCountingReaderAt struct {
 	// reader is the underlying random-access source.
