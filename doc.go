@@ -3,95 +3,71 @@
 // Source: github.com/woozymasta/pbo
 
 /*
-Package pbo reads, writes, extracts, signs, and edits PBO archives used by Arma and DayZ tools.
+Package pbo reads, writes, extracts, signs,
+and edits PBO archives used by Arma and DayZ tools.
 
-The package handles archive metadata separately from payload data.
-Opening an archive parses its headers and entry index;
-payload bytes are read only when an entry is accessed or extracted.
-[ReadHeaders] and [ListEntries] provide metadata-only operations
-for callers that do not need a [Reader].
+Archive metadata is parsed separately from payload data.
+Opening an archive reads its headers and entry index;
+payload bytes are accessed only when an entry is read or extracted.
+[ReadHeaders] and [ListEntries] provide
+metadata-only access without creating a [Reader].
 
 # Reading
 
-[Open] reads an archive from a file.
-[NewReaderFromReaderAt] supports files, memory buffers, and other random-access sources.
-[Reader] exposes ordered headers and entry metadata, lookup by archive path,
-and access to unpacked or packed entry bytes.
-[ReadEntry] returns the complete unpacked entry in memory;
-[OpenEntry] and [CopyEntryTo] support streaming access.
-The reader can also decode sealed archives when given a [SealedKey].
-[ReaderOptions] controls decoding, trailer handling,
-offset interpretation, and parser resource limits.
+[Open] reads an archive from a file, while [NewReaderFromReaderAt] supports
+files, memory buffers, and other random-access sources.
+A [Reader] provides ordered headers and entries, path lookup,
+and access to unpacked or packed payloads.
+Use [ReadEntry] to load an entry into memory,
+or [OpenEntry] and [CopyEntryTo] for streaming access.
 
-Entry paths returned by [Reader.Entries] preserve their raw archive identity.
-Lookup normalizes path separators and folds ASCII case;
-non-ASCII bytes are preserved.
-Duplicate paths remain present in the entry list,
-while lookup selects the first matching entry.
-
-[Reader.EntriesWithOptions] builds a separate filtered or sanitized view.
-Filtering and path rewriting do not change the reader's raw entries.
-Each [EntryInfo] retains its payload offset,
-so [Reader.OpenEntryInfo] and [Reader.CopyEntryInfoTo] can access
-the corresponding source entry even when the view rewrites its displayed path.
-[Reader.EntriesView] and [Reader.RangeEntries] provide lower-allocation ways
-to enumerate raw metadata.
+Entries retain their raw archive paths, and duplicate paths remain in source order.
+Lookup normalizes separators, folds ASCII case, and selects the first matching entry.
+[Reader.EntriesWithOptions] creates a separate filtered
+or sanitized view without changing the reader's raw entries.
+[Reader.EntriesView] and [Reader.RangeEntries]
+provide lower-allocation ways to enumerate entry metadata.
 
 # Extraction
 
-[Reader.Extract] extracts all raw entries by default,
-or a selected list passed through [ExtractOptions.Entries].
-Output names are sanitized by default.
-Extraction confines filesystem operations to the destination root
-and limits the number of active workers.
-Callers can select overwrite behavior and choose whether processing stops at the first error.
+[Reader.Extract] extracts all entries by default and sanitizes output names.
+Filesystem access stays confined to the destination root
+even when [ExtractOptions.RawNames] disables path sanitization.
+Extraction options also control entry selection, concurrency,
+overwrite behavior, and error handling.
 
 # Writing and editing
 
-[Pack] and [PackFile] write entries from caller-provided streams through [Input.Open].
-Entry order is deterministic. Compression candidates are chosen by path rules
-and stored compressed only when compression reduces their size.
-[PackOptions.MaxCompressSize] bounds candidate buffering;
-larger inputs are written without compression.
-[Pack] writes from offset zero, truncating outputs that support `Truncate(int64)`.
-Other seekable outputs must be empty and positioned at zero.
-Successful generic writes leave the output positioned at the archive end.
-[PackFile] appends a SHA1 trailer.
+[Pack] and [PackFile] create archives from caller-provided streams through [Input.Open].
+Entry order is deterministic; optional LZSS compression is selected
+by path rules and used only when it reduces the payload size.
+[PackOptions.MaxCompressSize] bounds compression buffering,
+with larger entries written without compression.
+
+[Pack] starts at offset zero and resets outputs that support truncation.
+Other outputs must be empty and positioned at zero.
 File-based pack operations stage the complete archive
-in the destination directory before replacing an existing file.
+before replacing the destination and append a SHA1 trailer.
 
-[OpenEditor] stages additions, replacements, and deletions,
-then applies them as one archive rewrite with [Editor.Commit].
-File-based edits can retain and rotate backup generations.
-The editor preserves untouched entries' raw paths,
-metadata, packed payload bytes, and source order;
-added entries are appended in staging order.
-Path-based replacement and deletion return [ErrAmbiguousEntryPath]
-when a path identifies multiple entries.
-[Editor.ReplaceAt] and [Editor.DeleteAt] address a specific source entry
-by its zero-based index in the original archive.
-
-Source properties are retained
-while [PackOptions.Headers] and [Editor.SetProperty] apply named overrides.
-[Editor.DeleteProperty] removes a named property,
-and [Editor.ClearProperties] explicitly removes all properties.
+[OpenEditor] stages changes for one archive rewrite with [Editor.Commit].
+The editor preserves untouched entries' raw paths, metadata, packed payloads,
+and source order; added entries are appended.
+File-based edits can retain and rotate backups.
 
 # Headers and signatures
 
-PBO headers are available in their original order and can be read
-without parsing the entry index.
-[Reader.Property], [Reader.Prefix], [Reader.Version], and [Reader.FSShadowing]
-provide access to common properties.
-Pack options support the same property names and typed setters.
+Headers can be read in order without parsing the entry index.
+[Reader.Property] and typed accessors such as
+[Reader.Prefix], [Reader.Version], and [Reader.FSShadowing] provide property access.
+Pack options support matching generic and typed setters.
 
-[Reader.SHA1Trailer] reports the optional trailer only after verifying it.
 [ComputeHashSet], [PackAndHash], and [PackAndHashFile]
-calculate signature hashes for supported signature versions and game types.
+calculate signature hashes for supported versions and game types.
+[Reader.SHA1Trailer] reports a trailer only after verifying it.
 
 # Resource limits
 
-[ReaderLimits] bounds header sections, individual fields,
-property counts, entry-name lengths, and index record counts.
+[ReaderLimits] bounds header sections, fields, properties, entry names, and index records.
 Zero-valued limits use defensive defaults;
 callers processing unusual archives can raise individual limits.
 */

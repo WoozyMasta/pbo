@@ -1,287 +1,36 @@
 # pbo
 
-Go package for reading, packing, and editing PBO archives.
+[pbo][pbo] is a Go library for working with PBO archives used by Arma and DayZ.
+It reads archive metadata and payloads, creates and edits archives,
+and extracts their contents.
 
-Main points:
+## When to use it
 
-* streaming input API via `Input.Open`
-* deterministic pack order by normalized path
-* optional LZSS compression by path rules
-* pack and hash set in one flow (`PackAndHash*`)
-* transactional edit API with backup rotation
+Use this module in tools that inspect game archives, build addon PBOs,
+update existing archives, or extract files for analysis.
+It handles the PBO container format; source transformations
+and addon build pipelines remain the caller's responsibility.
 
-## Usage examples
+## Installation
 
-### Pack
+Add the module to your project with:
 
-`PackFile` writes a deterministic PBO from `[]Input`.
-Compression is optional and controlled by path rules.
-Examples below use `github.com/woozymasta/pathrules`.
-`Pack` writes from offset zero.
-It truncates outputs that support `Truncate(int64)`;
-other seekable outputs must be empty and positioned at zero.
-Successful writes leave the output positioned at the end of the archive.
-`PackFile` and `PackAndHashFile` build a complete archive
-before replacing an existing destination.
-
-```go
-inputs := []pbo.Input{
-  {
-    Path: "config.cpp",
-    Open: func() (io.ReadCloser, error) {
-      return os.Open("src/config.cpp")
-    },
-  },
-}
-
-opts := pbo.PackOptions{
-  Headers: []pbo.HeaderPair{
-    {Key: "prefix", Value: "myaddon"},
-  },
-  Compress: []pathrules.Rule{
-    {Action: pathrules.ActionInclude, Pattern: "*.rvmat"},
-    {Action: pathrules.ActionInclude, Pattern: "textures/**"},
-  },
-  CompressMatcherOptions: pathrules.MatcherOptions{
-    CaseInsensitive: true,
-    DefaultAction:   pathrules.ActionExclude,
-  },
-  OnEntryDone: func(e pbo.PackEntryProgress) {
-    // optional per-entry progress callback
-  },
-}
-
-res, err := pbo.PackFile(ctx, "addon.pbo", inputs, opts)
-if err != nil {
-  return err
-}
-
-_ = res.WrittenEntries
-_ = res.RawBytes
-_ = res.CompressedBytes
-_ = res.CompressedEntries
-_ = res.SkippedCompressionEntries
-_ = res.Duration
+```sh
+go get github.com/woozymasta/pbo@latest
 ```
 
-### Compress by extensions
+## What it provides
 
-If you only have extension lists, convert them to include rules.
+* Read headers and entry indexes without loading payload data.
+* Read packed or decompressed entries, including streaming access.
+* Pack entries from files or caller-provided streams in deterministic order.
+* Optionally compress selected entries with LZSS and calculate signature hashes.
+* Edit archives while preserving untouched entries and their stored data.
+* Extract entries with sanitized paths and destination-root confinement.
 
-```go
-compressExts := []string{"rvmat", "ogg", "paa"}
-opts := pbo.PackOptions{
-  Compress: pathrules.ParseExtensions(compressExts),
-  CompressMatcherOptions: pathrules.MatcherOptions{
-    CaseInsensitive: true,
-    DefaultAction:   pathrules.ActionExclude,
-  },
-}
-```
+The library also supports duplicate entry paths, and bounded metadata parsing.
+See the package documentation for the exact behavior and options.
 
-You can also load compression rules directly from file:
+<!-- links -->
 
-```go
-// compress.rules:
-// !*.rvmat
-// !textures/**
-
-rules, err := pathrules.LoadRulesFile("compress.rules")
-if err != nil {
-  return err
-}
-
-opts.Compress = rules
-```
-
-### Pack and hash
-
-Use `PackAndHashFile` when you need archive creation and hash set in one pass.
-This avoids a second read for hash computation.
-
-```go
-res, hs, err := pbo.PackAndHashFile(
-  ctx,
-  "addon.pbo",
-  inputs,
-  opts,
-  pbo.SignVersionV3,
-  pbo.GameTypeDayZ,
-)
-if err != nil {
-  return err
-}
-
-_ = res
-_ = hs
-```
-
-### Read and extract
-
-Open archive, read entries by path, and extract to directory in one flow.
-`ExtractOptions.MaxWorkers` controls parallel extraction workers.
-Path sanitization is enabled by default for `Extract`.
-
-```go
-r, err := pbo.Open("addon.pbo")
-if err != nil {
-  return err
-}
-defer r.Close()
-
-entries := r.Entries()
-data, err := r.ReadEntry(entries[0].Path)
-if err != nil {
-  return err
-}
-_ = data
-
-err = r.Extract(ctx, "out", pbo.ExtractOptions{MaxWorkers: 4})
-if err != nil {
-  return err
-}
-
-// Disable default sanitization only when raw names are required.
-err = r.Extract(ctx, "out-raw", pbo.ExtractOptions{
-  MaxWorkers: 4,
-  RawNames:   true,
-})
-if err != nil {
-  return err
-}
-```
-
-### Reader filters
-
-`Reader.EntriesWithOptions` derives filtered
-and sanitized lists from the raw archive index.
-Entries keep their resolved offsets, so they can be passed to `OpenEntryInfo`
-even when their displayed paths are rewritten.
-
-```go
-r, err := pbo.Open("addon.pbo")
-if err != nil {
-  return err
-}
-defer r.Close()
-
-entries, err := r.EntriesWithOptions(pbo.EntryViewOptions{
-  MinOriginalSize:      12, // logical original size (fallback to DataSize)
-  PathPrefix:           "scripts/4_world",
-  SanitizeControlChars: true,
-  SanitizeNames:        true,
-})
-if err != nil {
-  return err
-}
-for _, entry := range entries {
-  rc, err := r.OpenEntryInfo(entry)
-  if err != nil {
-    return err
-  }
-  _ = rc.Close()
-}
-```
-
-`ReaderOptions` controls archive decoding and offset interpretation.
-`Entries` and path lookup use raw archive paths;
-`EntryViewOptions` applies only to the returned derived list,
-and its zero value returns all raw index entries.
-Pass a derived list through `ExtractOptions.Entries`
-to extract only that selection.
-
-```go
-if err := r.Extract(ctx, "out", pbo.ExtractOptions{MaxWorkers: 4}); err != nil {
-  return err
-}
-```
-
-`ReaderOptions.Limits` bounds parser metadata.
-Defaults are 16 MiB per header section, 1 MiB per property field,
-512 bytes per entry path, 65,536 header properties, and 1,048,576 entries.
-Raise individual limits for unusual archives.
-
-### Edit existing PBO
-
-Use `OpenEditor` for transactional changes to an existing archive.
-Queue add/replace/delete operations, then apply once with `Commit`.
-
-The editor keeps untouched source entries in their original order
-with their raw paths, metadata, and packed payload bytes.
-New entries are appended in staging order.
-`PackOptions.Headers` overlays named properties while retaining
-other source properties; use `SetProperty`, `DeleteProperty`,
-or `ClearProperties` for explicit header mutations.
-
-Path-based `Replace` and `Delete` return `ErrAmbiguousEntryPath` if a path
-matches multiple source entries. Use `ReplaceAt` or `DeleteAt` with the
-zero-based index from the original entry listing to target one duplicate.
-
-```go
-editor, err := pbo.OpenEditor("addon.pbo", pbo.EditOptions{
-  PackOptions: pbo.PackOptions{
-    Compress: []pathrules.Rule{
-      {Action: pathrules.ActionInclude, Pattern: "*.txt"},
-      {Action: pathrules.ActionInclude, Pattern: "*.c"},
-    },
-    CompressMatcherOptions: pathrules.MatcherOptions{
-      CaseInsensitive: true,
-      DefaultAction:   pathrules.ActionExclude,
-    },
-  },
-  BackupKeep: 1,
-})
-if err != nil {
-  return err
-}
-
-if err := editor.Replace(pbo.Input{
-  Path: "scripts/main.c",
-  Open: func() (io.ReadCloser, error) {
-    return os.Open("scripts/main.c")
-  },
-}); err != nil {
-  return err
-}
-
-if err := editor.DeleteDir("obsolete"); err != nil {
-  return err
-}
-
-_, err = editor.Commit(ctx)
-if err != nil {
-  return err
-}
-```
-
-## Compression behavior
-
-> [!IMPORTANT]  
-> In many modern mod packs, compression gives small size reduction.
-> Textures and models are usually already compressed by source formats.
-> Most gain comes from scripts and text, but they are often a tiny part of
-> total archive size. Compressing everything can spend CPU time for marginal
-> output difference. Use it selectively when it matches your build goals.
->
-> Compression still works correctly in this package.
-
-Compression is considered only when:
-
-* final `PackOptions.Compress` rule decision includes entry path
-* size is in `[MinCompressSize, MaxCompressSize]`
-
-Behavior details:
-
-* known-size candidates use in-memory compression path
-* unknown-size candidates are written raw
-* compressed payload is used only if it is smaller than raw payload
-
-> [!NOTE]  
-> Unknown-size inputs are never compressed in the main pack flow.
-
-## Limits and notes
-
-* classic PBO payload addressing is limited to 4 GiB
-* pack writes payload sequentially and patches index fields after payload write
-* this package does not run source transforms by itself
-* caller should provide transformed streams via `Input.Open`
+[pbo]: https://pkg.go.dev/github.com/woozymasta/pbo

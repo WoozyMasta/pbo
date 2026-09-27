@@ -18,42 +18,46 @@ and this project adheres to [Semantic Versioning][].
 
 ### Added
 
-* Reader and pack options expose generic and typed PBO property accessors.
-* `Reader.EntriesWithOptions` derives filtered
-  and sanitized entry views while preserving raw archive index metadata.
+* Added generic and typed PBO property accessors,
+  filtered entry views through `Reader.EntriesWithOptions`,
+  and editor operations for targeting duplicate entries
+  by index and changing header properties.
 
 ### Changed
 
-* Sanitized entry views now combine filtering and path rewriting into one pass;
-  long Unicode path segments keep valid UTF-8 when shortened.
-* `ReadEntry` now reads raw payloads into one exact-size allocation
-  and decodes compressed payloads directly into a pre-sized buffer.
-* Generic packing now resets truncatable outputs
-  and rejects non-empty non-truncatable outputs;
-  file packing replaces destinations only after the complete archive
-  and SHA1 trailer have been written successfully.
-* `Reader.Entries`, `EntriesView`, path lookup and default extraction
-  now use raw archive entries.
-  Filtering and sanitization are explicit through `Reader.EntriesWithOptions`;
-  presentation fields were removed from `ReaderOptions`.
+* `Reader.Entries`, `EntriesView`, path lookup,
+  and default extraction use raw archive paths.
+  Derived filtering and sanitization are explicit
+  through `Reader.EntriesWithOptions`;
+  duplicate entries stay in source order and path lookup returns first match.
+* Editor preserves untouched entries' source order, raw paths, metadata,
+  and packed payloads. New entries are appended;
+  path-based replacement and deletion return an ambiguity error
+  when a path matches multiple entries.
+* Packing resets truncatable outputs and rejects non-empty outputs
+  that cannot be truncated.
+  File-based packing replaces the destination
+  only after the complete archive and SHA1 trailer have been written.
+* Path matching normalizes separators and folds ASCII case.
+  Sanitized Unicode path segments remain valid UTF-8 when shortened.
+* Parser limits now bound header fields, properties,
+  entry names, and index records.
+  Compression that exceed `MaxCompressSize` fall back to raw streaming.
+* Header-only reads of sealed archives skip payload reads.
+  In `TrailerModeAuto`, they do not verify the trailer;
+  use a full `Reader` and `SHA1Trailer()` when integrity must be checked.
+* Trailer detection uses the resolved payload boundary,
+  and `SHA1Trailer()` returns a digest only after verification.
+
+### Fixed
+
 * Writer rejects malformed NUL-terminated fields
-  before output or file truncation.
-* Extraction limits workers to selected entries
-  and no longer allocates an error channel proportional to entry count.
-* Extraction now confines directory and file access to `os.Root`,
+  before writing or truncating output.
+
+### Security
+
+* Extraction confines filesystem access to `os.Root`,
   preventing archive paths and symlinks from escaping the destination.
-* Reader parsing now applies configurable limits
-  to header fields, properties, entry names and index records.
-  Entry metadata preallocation no longer scales with total archive size.
-* Compression candidates buffer at most `MaxCompressSize + 1` bytes
-  before falling back to raw streaming when `SizeHint` is too small.
-* Trailer detection now checks the resolved payload boundary,
-  and `SHA1Trailer()` returns only a digest that verifies against the archive.
-  `ReaderOptions.TrailerMode` can force trailer presence or absence;
-  sealed auto-detection verifies a candidate digest before choosing its seed.
-* Sealed transforms batch 4 KiB segments into bounded 1 MiB I/O operations.
-* Reader lookup, writer path validation and editor path matching
-  now share separator normalization with ASCII-only case folding.
 
 ## [0.3.0][] - 2026-07-01
 
