@@ -5,13 +5,15 @@
 package pbo
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"math"
 
 	"github.com/woozymasta/lzss"
 )
+
+// maxBufferedCompressedCopySize keeps small-entry copies below one LZSS history window.
+const maxBufferedCompressedCopySize = lzss.WindowSize
 
 // nopCloser wraps a reader and provides a no-op close.
 type nopCloser struct {
@@ -155,17 +157,12 @@ func (r *Reader) readEntryByInfo(info *EntryInfo, name string) ([]byte, error) {
 		return nil, fmt.Errorf("resolve output size for %s: %w", name, err)
 	}
 
-	// The decoder writes bounded chunks into this exact-capacity buffer, avoiding
-	// both pipe coordination and repeated growth from io.ReadAll.
-	data := bytes.NewBuffer(make([]byte, 0, outLen))
-	if _, err := lzss.DecompressToWriter(data, sr, outLen, nil); err != nil {
+	data, _, err := lzss.DecompressFromReader(sr, outLen, nil)
+	if err != nil {
 		return nil, fmt.Errorf("decompress entry %s: %w", name, err)
 	}
-	if data.Len() != outLen {
-		return nil, fmt.Errorf("decompress entry %s: output size %d, want %d", name, data.Len(), outLen)
-	}
 
-	return data.Bytes(), nil
+	return data, nil
 }
 
 // streamDecompressEntry decodes one compressed entry stream into pipe writer.
@@ -191,8 +188,12 @@ type writerOnly struct{ io.Writer }
 
 // copyEntryPayloadTo copies one entry payload (decompressing if needed) directly into dst
 // without spawning a goroutine or pipe. buf is used for uncompressed copies; nil is safe.
-// For compressed entries the lzss package manages its own internal buffer.
+// Small compressed entries use bounded buffers; larger entries are decoded as a stream.
 func (r *Reader) copyEntryPayloadTo(info *EntryInfo, dst io.Writer, buf []byte) (int64, error) {
+	if dst == nil {
+		return 0, ErrNilWriter
+	}
+
 	sr := io.NewSectionReader(r.ra, int64(info.Offset), int64(info.DataSize))
 	if !info.IsCompressed() {
 		return io.CopyBuffer(writerOnly{dst}, readerOnly{sr}, buf)
@@ -203,7 +204,33 @@ func (r *Reader) copyEntryPayloadTo(info *EntryInfo, dst io.Writer, buf []byte) 
 		return 0, fmt.Errorf("resolve output size for %s: %w", info.Path, err)
 	}
 
-	return lzss.DecompressToWriter(dst, sr, outLen, nil)
+	if outLen <= maxBufferedCompressedCopySize && info.DataSize <= maxBufferedCompressedCopySize {
+		// Avoid the stream decoder's fixed history buffer for tiny entries.
+		packedSize, err := checkedUint32ToInt(info.DataSize)
+		if err != nil {
+			return 0, fmt.Errorf("resolve packed size for %s: %w", info.Path, err)
+		}
+		packed := make([]byte, packedSize)
+		if _, err := io.ReadFull(sr, packed); err != nil {
+			return 0, fmt.Errorf("read packed entry %s: %w", info.Path, err)
+		}
+
+		data, _, err := lzss.DecompressBlock(packed, outLen, nil)
+		if err != nil {
+			return 0, fmt.Errorf("decompress entry %s: %w", info.Path, err)
+		}
+		if err := writePayloadBytes(dst, data); err != nil {
+			return 0, fmt.Errorf("write decompressed entry %s: %w", info.Path, err)
+		}
+
+		return int64(len(data)), nil
+	}
+
+	if _, err := lzss.DecompressToWriter(dst, sr, outLen, nil); err != nil {
+		return 0, err
+	}
+
+	return int64(outLen), nil
 }
 
 // CopyEntryTo decompresses and copies the named entry into dst using the provided buf.

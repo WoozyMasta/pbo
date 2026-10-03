@@ -67,6 +67,18 @@ func TestReadEntry_MatchesStreamingForRawCompressedAndEmpty(t *testing.T) {
 			if !bytes.Equal(got, want) {
 				t.Fatalf("ReadEntry differs from stream: got %d bytes, want %d", len(got), len(want))
 			}
+
+			var copied bytes.Buffer
+			written, err := r.CopyEntryTo(name, &copied, nil)
+			if err != nil {
+				t.Fatalf("CopyEntryTo: %v", err)
+			}
+			if written != int64(copied.Len()) {
+				t.Fatalf("CopyEntryTo reported %d bytes, wrote %d", written, copied.Len())
+			}
+			if !bytes.Equal(copied.Bytes(), want) {
+				t.Fatalf("CopyEntryTo differs from stream: got %d bytes, want %d", copied.Len(), len(want))
+			}
 		})
 	}
 }

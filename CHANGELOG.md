@@ -42,7 +42,8 @@ and this project adheres to [Semantic Versioning][].
   Sanitized Unicode path segments remain valid UTF-8 when shortened.
 * Parser limits now bound header fields, properties,
   entry names, and index records.
-  Compression that exceed `MaxCompressSize` fall back to raw streaming.
+  Compression candidates that exceed `MaxCompressSize`
+  fall back to raw streaming.
 * Header-only reads of sealed archives skip payload reads.
   In `TrailerModeAuto`, they do not verify the trailer;
   use a full `Reader` and `SHA1Trailer()` when integrity must be checked.
@@ -53,6 +54,8 @@ and this project adheres to [Semantic Versioning][].
 
 * Writer rejects malformed NUL-terminated fields
   before writing or truncating output.
+* `CopyEntryTo` and `CopyEntryInfoTo` report decompressed bytes
+  written for compressed entries.
 
 ### Security
 
