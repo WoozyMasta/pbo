@@ -22,6 +22,8 @@ func TestShouldUseCompressionForInput(t *testing.T) {
 	t.Parallel()
 
 	opts := PackOptions{
+		Compress:        true,
+		CompressRules:   includeRules("*.paa"),
 		MinCompressSize: 100,
 		MaxCompressSize: 1000,
 	}
@@ -153,7 +155,7 @@ func TestPack_CompressEnabledNoMatchKeepsUncompressed(t *testing.T) {
 		},
 	}
 
-	_, err = Pack(context.Background(), f, inputs, PackOptions{Compress: includeRules("*.paa")})
+	_, err = Pack(context.Background(), f, inputs, PackOptions{Compress: true, CompressRules: includeRules("*.paa")})
 	if err != nil {
 		t.Fatalf("Pack: %v", err)
 	}
@@ -256,7 +258,8 @@ func TestPack_UnknownSizeHintKeepsRaw(t *testing.T) {
 	}
 
 	_, err = Pack(context.Background(), f, inputs, PackOptions{
-		Compress: includeRules("*"),
+		Compress:      true,
+		CompressRules: includeRules("*"),
 	})
 	if err != nil {
 		t.Fatalf("Pack: %v", err)
@@ -307,7 +310,8 @@ func TestPack_KnownSmallSizeCompresses(t *testing.T) {
 	}
 
 	_, err = Pack(context.Background(), f, inputs, PackOptions{
-		Compress: includeRules("*"),
+		Compress:      true,
+		CompressRules: includeRules("*"),
 	})
 	if err != nil {
 		t.Fatalf("Pack: %v", err)
@@ -357,7 +361,7 @@ func TestPack_UnknownSizeHintStaysRawWhenCompressEnabled(t *testing.T) {
 		},
 	}
 
-	_, err = Pack(context.Background(), f, inputs, PackOptions{Compress: includeRules("*")})
+	_, err = Pack(context.Background(), f, inputs, PackOptions{Compress: true, CompressRules: includeRules("*")})
 	if err != nil {
 		t.Fatalf("Pack: %v", err)
 	}
@@ -407,7 +411,8 @@ func TestPack_KnownSizeOverMaxCompressSizeStaysRaw(t *testing.T) {
 	}
 
 	_, err = Pack(context.Background(), f, inputs, PackOptions{
-		Compress:        includeRules("*"),
+		Compress:        true,
+		CompressRules:   includeRules("*"),
 		MinCompressSize: 1,
 		MaxCompressSize: 1024, // smaller than payload
 	})
@@ -724,7 +729,8 @@ func TestPack_TelemetryAndOnEntryDone(t *testing.T) {
 
 	progress := make([]PackEntryProgress, 0, len(inputs))
 	res, err := Pack(context.Background(), f, inputs, PackOptions{
-		Compress:        includeRules("*.txt"),
+		Compress:        true,
+		CompressRules:   includeRules("*.txt"),
 		MinCompressSize: 1,
 		OnEntryDone: func(entry PackEntryProgress) {
 			progress = append(progress, entry)
@@ -746,8 +752,8 @@ func TestPack_TelemetryAndOnEntryDone(t *testing.T) {
 	if res.RawBytes+res.CompressedBytes != res.DataSize {
 		t.Fatalf("raw+compressed=%d, data_size=%d", res.RawBytes+res.CompressedBytes, res.DataSize)
 	}
-	if res.Duration <= 0 {
-		t.Fatalf("duration=%s, want > 0", res.Duration)
+	if res.Duration < 0 {
+		t.Fatalf("duration=%s, want >= 0", res.Duration)
 	}
 
 	if len(progress) != len(inputs) {

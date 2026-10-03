@@ -325,7 +325,7 @@ func preparePackRequest(inputs []Input, opts PackOptions) ([]rewriteEntry, PackO
 	if err := validateRewritePlanPaths(rewritePlan); err != nil {
 		return nil, opts, err
 	}
-	if _, err := newCompressMatcher(opts.Compress, opts.CompressMatcherOptions); err != nil {
+	if _, err := newCompressMatcher(opts.CompressRules, opts.CompressMatcherOptions); err != nil {
 		return nil, opts, fmt.Errorf("compile compress rules: %w", err)
 	}
 
@@ -571,18 +571,21 @@ func openInputReader(in Input) (io.ReadCloser, error) {
 // writeInputPayload writes one entry payload according to precomputed compression plan.
 func writeInputPayload(
 	dst io.Writer,
-	src io.Reader,
+	selection compressionSelection,
 	in Input,
 	opts PackOptions,
-	useCompression bool,
 	currentOffset uint32,
 	copyBuf []byte,
 ) (writtenEntry, error) {
-	if !useCompression {
-		return writeUncompressedPayload(dst, src, in, currentOffset, copyBuf)
+	if !selection.candidate {
+		return writeUncompressedPayload(dst, selection.source, in, currentOffset, copyBuf)
 	}
 
-	return writeCompressedCandidatePayload(dst, src, in, opts, currentOffset, copyBuf)
+	if selection.bounds == (compressionSizeBounds{}) {
+		return writeCompressedCandidatePayload(dst, selection.source, in, opts, currentOffset, copyBuf)
+	}
+
+	return writeProfiledCandidatePayload(dst, selection.source, in, opts, selection.bounds, currentOffset, copyBuf)
 }
 
 // rewriteArchive is shared writer core for Pack and editor commit flows.
@@ -627,7 +630,7 @@ func rewriteArchiveDetailed(
 		return nil, err
 	}
 
-	compressMatcher, err := newCompressMatcher(opts.Compress, opts.CompressMatcherOptions)
+	compressMatcher, err := newCompressMatcher(opts.CompressRules, opts.CompressMatcherOptions)
 	if err != nil {
 		return nil, fmt.Errorf("compile compress rules: %w", err)
 	}
@@ -896,19 +899,22 @@ func writeRewriteInputPayload(
 		return writtenEntry{}, fmt.Errorf("entry %s: missing input/source", item.path)
 	}
 
-	useCompression := shouldUseCompressionForInput(opts, matcher, *item.input)
-
 	rc, err := openInputReader(*item.input)
 	if err != nil {
 		return writtenEntry{}, err
 	}
 
+	selection, selectErr := selectCompressionInput(opts, matcher, *item.input, rc)
+	if selectErr != nil {
+		_ = rc.Close()
+		return writtenEntry{}, selectErr
+	}
+
 	record, writeErr := writeInputPayload(
 		dst,
-		rc,
+		selection,
 		*item.input,
 		opts,
-		useCompression,
 		currentOffset,
 		copyBuf,
 	)
@@ -920,14 +926,14 @@ func writeRewriteInputPayload(
 		return writtenEntry{}, fmt.Errorf("close input %s: %w", item.input.Path, closeErr)
 	}
 
-	record.compressionCandidate = useCompression
+	record.compressionCandidate = selection.candidate
 
 	return record, nil
 }
 
 // shouldUseCompressionForInput reports whether input should enter compression candidate path.
 func shouldUseCompressionForInput(opts PackOptions, matcher *compressMatcher, in Input) bool {
-	if matcher == nil {
+	if !opts.Compress {
 		return false
 	}
 
@@ -936,6 +942,12 @@ func shouldUseCompressionForInput(opts PackOptions, matcher *compressMatcher, in
 	}
 
 	if in.SizeHint > int64(^uint32(0)) {
+		return false
+	}
+	if len(opts.CompressRules) == 0 {
+		return autoCompressionMayApply(in.Path)
+	}
+	if matcher == nil {
 		return false
 	}
 
@@ -952,11 +964,12 @@ func shouldSkipCompressBySizeHint(opts PackOptions, sizeHint int64) bool {
 		return false
 	}
 
-	return sizeHint < int64(opts.MinCompressSize) || sizeHint > int64(opts.MaxCompressSize)
+	return (opts.MinCompressSize > 0 && sizeHint < int64(opts.MinCompressSize)) ||
+		sizeHint > int64(opts.MaxCompressSize)
 }
 
-// writeCompressedCandidatePayload handles compression candidate with in-memory path for known-size inputs.
-// Unknown-size and out-of-range candidates are streamed raw.
+// writeCompressedCandidatePayload handles explicit-rule candidates with known sizes.
+// Unknown-size and out-of-range explicit candidates are streamed raw.
 func writeCompressedCandidatePayload(
 	dst io.Writer,
 	src io.Reader,
@@ -971,6 +984,24 @@ func writeCompressedCandidatePayload(
 	}
 
 	return writeCompressedCandidatePayloadInMemory(dst, src, in, opts, currentOffset, copyBuf, maxEntrySize)
+}
+
+// writeProfiledCandidatePayload applies format limits before invoking the compressor.
+func writeProfiledCandidatePayload(
+	dst io.Writer,
+	src io.Reader,
+	in Input,
+	opts PackOptions,
+	bounds compressionSizeBounds,
+	currentOffset uint32,
+	copyBuf []byte,
+) (writtenEntry, error) {
+	maxEntrySize := int64(^uint32(0)) - int64(currentOffset)
+	if !shouldUseProfiledInMemoryPath(opts, bounds, in.SizeHint, maxEntrySize) {
+		return writeUncompressedPayload(dst, src, in, currentOffset, copyBuf)
+	}
+
+	return writeProfiledCandidatePayloadInMemory(dst, src, in, opts, bounds, currentOffset, copyBuf, maxEntrySize)
 }
 
 // writeUncompressedPayload streams payload directly into destination and records MimeNil metadata.
@@ -1015,6 +1046,22 @@ func shouldUseInMemoryCompressPath(opts PackOptions, sizeHint int64, maxEntrySiz
 	return true
 }
 
+// shouldUseProfiledInMemoryPath keeps profile-excluded entries on the raw streaming path.
+func shouldUseProfiledInMemoryPath(opts PackOptions, bounds compressionSizeBounds, sizeHint int64, maxEntrySize int64) bool {
+	if bounds == (compressionSizeBounds{}) {
+		return shouldUseInMemoryCompressPath(opts, sizeHint, maxEntrySize)
+	}
+
+	if sizeHint > maxEntrySize || sizeHint > int64(opts.MaxCompressSize) {
+		return false
+	}
+	if bounds.max != 0 && sizeHint > int64(bounds.max) {
+		return false
+	}
+
+	return true
+}
+
 // writeCompressedCandidatePayloadInMemory buffers at most MaxCompressSize+1 bytes before deciding whether to compress.
 func writeCompressedCandidatePayloadInMemory(
 	dst io.Writer,
@@ -1025,7 +1072,24 @@ func writeCompressedCandidatePayloadInMemory(
 	copyBuf []byte,
 	maxEntrySize int64,
 ) (writtenEntry, error) {
+	return writeProfiledCandidatePayloadInMemory(dst, src, in, opts, compressionSizeBounds{}, currentOffset, copyBuf, maxEntrySize)
+}
+
+// writeProfiledCandidatePayloadInMemory buffers only bytes eligible under global and format limits.
+func writeProfiledCandidatePayloadInMemory(
+	dst io.Writer,
+	src io.Reader,
+	in Input,
+	opts PackOptions,
+	bounds compressionSizeBounds,
+	currentOffset uint32,
+	copyBuf []byte,
+	maxEntrySize int64,
+) (writtenEntry, error) {
 	candidateLimit := min(int64(opts.MaxCompressSize), maxEntrySize)
+	if bounds.max != 0 {
+		candidateLimit = min(candidateLimit, int64(bounds.max))
+	}
 	chunks, rawSize, overLimit, err := readCompressionCandidate(src, candidateLimit, in.SizeHint)
 	if err != nil {
 		return writtenEntry{}, fmt.Errorf("stream input %s: %w", in.Path, err)
@@ -1050,7 +1114,7 @@ func writeCompressedCandidatePayloadInMemory(
 		mime:      MimeNil,
 		timestamp: timeToUint32(in.ModTime),
 	}
-	if !shouldCompressBySize(opts, originalSize) {
+	if !shouldCompressByBounds(opts, bounds, originalSize) {
 		if err := writeRawChunks(dst, chunks); err != nil {
 			return writtenEntry{}, fmt.Errorf("write payload %s: %w", in.Path, err)
 		}

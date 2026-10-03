@@ -82,7 +82,8 @@ func TestComputeHashSet_FileHashUsesStoredEntryOrder(t *testing.T) {
 	}
 
 	_, err := PackFile(context.Background(), outPath, inputs, PackOptions{
-		Compress:        includeRules("*.c"),
+		Compress:        true,
+		CompressRules:   includeRules("*.c"),
 		MinCompressSize: 1,
 	})
 	if err != nil {
@@ -242,7 +243,8 @@ func createCompressedSignFixturePBO(t *testing.T, payload []byte) string {
 	}
 
 	_, err := PackFile(context.Background(), path, inputs, PackOptions{
-		Compress:        includeRules(entryPath),
+		Compress:        true,
+		CompressRules:   includeRules(entryPath),
 		MinCompressSize: 1,
 	})
 	if err != nil {

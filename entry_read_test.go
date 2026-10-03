@@ -36,7 +36,8 @@ func TestReadEntry_MatchesStreamingForRawCompressedAndEmpty(t *testing.T) {
 	}
 	path := filepath.Join(t.TempDir(), "read-entry.pbo")
 	if _, err := PackFile(context.Background(), path, inputs, PackOptions{
-		Compress:        includeRules("compressed.bin"),
+		Compress:        true,
+		CompressRules:   includeRules("compressed.bin"),
 		MinCompressSize: 1,
 	}); err != nil {
 		t.Fatalf("PackFile: %v", err)

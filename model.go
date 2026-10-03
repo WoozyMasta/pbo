@@ -127,12 +127,12 @@ type PackOptions struct {
 	signHashGameType GameType
 	// Headers are written in deterministic order.
 	Headers []HeaderPair `json:"headers,omitempty" yaml:"headers,omitempty"`
-	// Compress defines ordered path rules for compression candidate selection.
-	Compress []pathrules.Rule `json:"compress,omitempty" yaml:"compress,omitempty"`
+	// CompressRules override the automatic profile with ordered path rules.
+	CompressRules []pathrules.Rule `json:"compress_rules,omitempty" yaml:"compress_rules,omitempty"`
 	// WriterBufferSize is buffered writer size in bytes.
 	WriterBufferSize int `json:"writer_buffer_size,omitempty" yaml:"writer_buffer_size,omitempty"`
-	// MinCompressSize disables compression for entries smaller than this size.
-	// Default is 512 bytes.
+	// MinCompressSize is a caller-controlled global minimum compression size.
+	// Zero uses automatic profile limits, or 512 bytes with explicit rules.
 	MinCompressSize uint32 `json:"min_compress_size,omitempty" yaml:"min_compress_size,omitempty"`
 	// MaxCompressSize bounds raw candidate buffering; one extra byte detects fallback.
 	// Codec output may add temporary memory.
@@ -143,6 +143,8 @@ type PackOptions struct {
 	signHashVersion SignVersion
 	// CompressMatcherOptions control compression path rule matching.
 	CompressMatcherOptions pathrules.MatcherOptions `json:"compress_matcher_options,omitzero" yaml:"compress_matcher_options,omitzero"`
+	// Compress enables compression. Without rules, the automatic format profile is used.
+	Compress bool `json:"compress,omitempty" yaml:"compress,omitempty"`
 }
 
 // PackResult contains pack output statistics.
@@ -270,11 +272,11 @@ func (opts *PackOptions) applyDefaults() {
 		opts.WriterBufferSize = DefaultWriteBuffer
 	}
 
-	if opts.MinCompressSize == 0 {
+	if opts.MinCompressSize == 0 && (!opts.Compress || len(opts.CompressRules) > 0) {
 		opts.MinCompressSize = DefaultMinCompressSize
 	}
 
-	if opts.MaxCompressSize == 0 || opts.MaxCompressSize <= opts.MinCompressSize {
+	if opts.MaxCompressSize == 0 || (opts.MinCompressSize > 0 && opts.MaxCompressSize <= opts.MinCompressSize) {
 		opts.MaxCompressSize = DefaultMaxCompressSize
 	}
 

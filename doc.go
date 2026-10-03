@@ -39,8 +39,17 @@ overwrite behavior, and error handling.
 # Writing and editing
 
 [Pack] and [PackFile] create archives from caller-provided streams through [Input.Open].
-Entry order is deterministic; optional LZSS compression is selected
-by path rules and used only when it reduces the payload size.
+Entry order is deterministic;
+optional LZSS compression is selected with [PackOptions.Compress].
+With no [PackOptions.CompressRules],
+the automatic profile selects known compressible formats
+from each stream's extension and a bounded content prefix.
+Explicit rules replace the profile.
+The profile also applies measured per-format size ranges;
+non-zero [PackOptions.MinCompressSize] and [PackOptions.MaxCompressSize]
+further narrow those ranges.
+Zero minimum uses profile defaults, or 512 bytes with explicit rules.
+Compressed output is kept only when it is smaller than the source.
 [PackOptions.MaxCompressSize] bounds compression buffering,
 with larger entries written without compression.
 

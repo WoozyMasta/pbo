@@ -57,13 +57,14 @@ func TestShouldCompressPolicy(t *testing.T) {
 	t.Parallel()
 
 	opts := PackOptions{
-		Compress:        includeRules("*.bin"),
+		Compress:        true,
+		CompressRules:   includeRules("*.bin"),
 		MinCompressSize: 100,
 		MaxCompressSize: 1000,
 	}
 	opts.applyDefaults()
 
-	matcher, err := newCompressMatcher(opts.Compress, opts.CompressMatcherOptions)
+	matcher, err := newCompressMatcher(opts.CompressRules, opts.CompressMatcherOptions)
 	if err != nil {
 		t.Fatalf("new matcher: %v", err)
 	}
@@ -191,7 +192,8 @@ func TestPack_CompressUnknownSizeHintBranch(t *testing.T) {
 	}
 
 	opts := PackOptions{
-		Compress:        includeRules("*.txt"),
+		Compress:        true,
+		CompressRules:   includeRules("*.txt"),
 		MinCompressSize: 1,
 		MaxCompressSize: 8 * 1024 * 1024,
 	}

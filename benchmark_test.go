@@ -347,7 +347,7 @@ func BenchmarkPackWithCompress(b *testing.B) {
 			SizeHint: int64(len(data)),
 		}
 	}
-	opts := PackOptions{Compress: includeRules("*")}
+	opts := PackOptions{Compress: true, CompressRules: includeRules("*")}
 	dir := b.TempDir()
 
 	b.ReportAllocs()
@@ -374,7 +374,8 @@ func BenchmarkPackWithCompressFalseLowSizeHint(b *testing.B) {
 		SizeHint: 1,
 	}}
 	opts := PackOptions{
-		Compress:        includeRules("*"),
+		Compress:        true,
+		CompressRules:   includeRules("*"),
 		MinCompressSize: 1,
 		MaxCompressSize: DefaultMaxCompressSize,
 	}
@@ -408,7 +409,7 @@ func BenchmarkPackWithCompressNoMatch(b *testing.B) {
 			SizeHint: int64(len(data)),
 		}
 	}
-	opts := PackOptions{Compress: includeRules("*.paa")}
+	opts := PackOptions{Compress: true, CompressRules: includeRules("*.paa")}
 	dir := b.TempDir()
 
 	b.ReportAllocs()
@@ -436,7 +437,7 @@ func BenchmarkPackAndHash(b *testing.B) {
 			SizeHint: int64(len(data)),
 		}
 	}
-	opts := PackOptions{Compress: includeRules("*.c")}
+	opts := PackOptions{Compress: true, CompressRules: includeRules("*.c")}
 	dir := b.TempDir()
 
 	b.ReportAllocs()
@@ -467,7 +468,8 @@ func BenchmarkEditAdd(b *testing.B) {
 
 		editor, err := OpenEditor(out, EditOptions{
 			PackOptions: PackOptions{
-				Compress:        includeRules("*.txt"),
+				Compress:        true,
+				CompressRules:   includeRules("*.txt"),
 				MinCompressSize: 1,
 			},
 			BackupKeep: 0,
@@ -508,7 +510,8 @@ func BenchmarkEditReplace(b *testing.B) {
 
 		editor, err := OpenEditor(out, EditOptions{
 			PackOptions: PackOptions{
-				Compress:        includeRules("*.txt"),
+				Compress:        true,
+				CompressRules:   includeRules("*.txt"),
 				MinCompressSize: 1,
 			},
 			BackupKeep: 0,
@@ -692,7 +695,8 @@ func createBenchReadEntryPBO(b *testing.B, entryPath string, payload []byte, com
 	}
 	opts := PackOptions{}
 	if compressed {
-		opts.Compress = includeRules("*.txt")
+		opts.Compress = true
+		opts.CompressRules = includeRules("*.txt")
 	}
 	if _, err := PackFile(context.Background(), out, []Input{input}, opts); err != nil {
 		b.Fatal(err)

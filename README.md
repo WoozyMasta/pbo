@@ -23,8 +23,9 @@ go get github.com/woozymasta/pbo@latest
 
 * Read headers and entry indexes without loading payload data.
 * Read packed or decompressed entries, including streaming access.
-* Pack entries from files or caller-provided streams in deterministic order.
-* Optionally compress selected entries with LZSS and calculate signature hashes.
+* Pack entries from files or caller-provided streams in deterministic order,
+  with a size-aware automatic LZSS profile or explicit path rules.
+* Calculate signature hashes for supported versions and game types.
 * Edit archives while preserving untouched entries and their stored data.
 * Extract entries with sanitized paths and destination-root confinement.
 

@@ -424,7 +424,8 @@ func TestListEntries_MatchesOpenEntries(t *testing.T) {
 	}
 
 	opts := PackOptions{
-		Compress: includeRules("*.txt"),
+		Compress:      true,
+		CompressRules: includeRules("*.txt"),
 	}
 	if _, err := PackFile(context.Background(), outPath, inputs, opts); err != nil {
 		t.Fatalf("PackFile: %v", err)
@@ -986,7 +987,8 @@ func TestReadEntry_CompressedCorruptedPayload(t *testing.T) {
 		},
 	}
 	opts := PackOptions{
-		Compress:        includeRules("*"),
+		Compress:        true,
+		CompressRules:   includeRules("*"),
 		MinCompressSize: 1,
 		MaxCompressSize: 32 * 1024 * 1024,
 	}

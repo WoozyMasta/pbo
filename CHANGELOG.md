@@ -22,9 +22,16 @@ and this project adheres to [Semantic Versioning][].
   filtered entry views through `Reader.EntriesWithOptions`,
   and editor operations for targeting duplicate entries
   by index and changing header properties.
+* Added an automatic compression profile for known DayZ formats.
 
 ### Changed
 
+* Compression is enabled with `PackOptions.Compress`;
+  `CompressRules` now explicitly overrides the automatic profile.
+  The profile classifies content and size, including small PAA and ODOL assets,
+  text `.bisurf`, `.cfg`, `.csv`, `.imageset`, `.layout`, `.md`,
+  `.meta`, `.ptc`, and `.styles` files, binary `.fnt` and `.tga` assets,
+  and DayZ areaflags maps while skipping measured poor-return formats.
 * `Reader.Entries`, `EntriesView`, path lookup,
   and default extraction use raw archive paths.
   Derived filtering and sanitization are explicit

@@ -32,7 +32,8 @@ func TestPackAndHash_MatchesComputeHashSet(t *testing.T) {
 	}
 
 	_, hsPack, err := PackAndHash(context.Background(), f, inputs, PackOptions{
-		Compress:        includeRules("*.c"),
+		Compress:        true,
+		CompressRules:   includeRules("*.c"),
 		MinCompressSize: 1,
 	}, SignVersionV3, GameTypeDayZ)
 	if err != nil {
@@ -69,7 +70,8 @@ func TestPackAndHashFile_MatchesComputeHashSet(t *testing.T) {
 	}
 
 	_, hsPack, err := PackAndHashFile(context.Background(), outPath, inputs, PackOptions{
-		Compress: includeRules("*.txt"),
+		Compress:      true,
+		CompressRules: includeRules("*.txt"),
 	}, SignVersionV2, GameTypeAny)
 	if err != nil {
 		t.Fatalf("PackAndHashFile: %v", err)

@@ -40,7 +40,8 @@ func TestPackFileAndOpenWithOptions_SealedKeyRoundTrip(t *testing.T) {
 		Headers: []HeaderPair{
 			{Key: "prefix", Value: "test/mod"},
 		},
-		Compress: includeRules("*.c"),
+		Compress:      true,
+		CompressRules: includeRules("*.c"),
 	}
 
 	if _, err := PackFile(context.Background(), plainPath, inputs, packOpts); err != nil {

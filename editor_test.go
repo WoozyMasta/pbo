@@ -21,7 +21,8 @@ func TestEditorCommit_AddReplaceDeleteDir(t *testing.T) {
 		"dir/sub/b.txt":  []byte("old-b"),
 		"scripts/main.c": bytes.Repeat([]byte("class X {};"), 256),
 	}, PackOptions{
-		Compress:        includeRules("*.c"),
+		Compress:        true,
+		CompressRules:   includeRules("*.c"),
 		MinCompressSize: 1,
 	})
 	if err != nil {
@@ -30,7 +31,8 @@ func TestEditorCommit_AddReplaceDeleteDir(t *testing.T) {
 
 	editor, err := OpenEditor(pboPath, EditOptions{
 		PackOptions: PackOptions{
-			Compress:        includeRules("*.txt", "*.c"),
+			Compress:        true,
+			CompressRules:   includeRules("*.txt", "*.c"),
 			MinCompressSize: 1,
 		},
 		BackupKeep: 0,

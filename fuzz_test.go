@@ -103,7 +103,8 @@ func buildFuzzSeedPBO(tb testing.TB) []byte {
 	}
 
 	opts := PackOptions{
-		Compress:        includeRules("*.cfg"),
+		Compress:        true,
+		CompressRules:   includeRules("*.cfg"),
 		MinCompressSize: 1,
 	}
 

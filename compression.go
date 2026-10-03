@@ -104,8 +104,16 @@ func (m *compressMatcher) Match(path string) bool {
 
 // shouldCompress returns true if path and size pass compression policy.
 func shouldCompress(opts PackOptions, matcher *compressMatcher, path string, size uint32) bool {
+	if !opts.Compress {
+		return false
+	}
+
 	if !shouldCompressBySize(opts, size) {
 		return false
+	}
+
+	if len(opts.CompressRules) == 0 {
+		return autoCompressionMayApply(path)
 	}
 
 	if matcher == nil {
@@ -117,7 +125,16 @@ func shouldCompress(opts PackOptions, matcher *compressMatcher, path string, siz
 
 // shouldCompressBySize reports whether payload size fits compression boundaries.
 func shouldCompressBySize(opts PackOptions, size uint32) bool {
-	if size > opts.MaxCompressSize || size < opts.MinCompressSize {
+	return shouldCompressByBounds(opts, compressionSizeBounds{}, size)
+}
+
+// shouldCompressByBounds applies caller limits and a format-specific profile range.
+func shouldCompressByBounds(opts PackOptions, bounds compressionSizeBounds, size uint32) bool {
+	minSize := max(opts.MinCompressSize, bounds.min)
+	if size > opts.MaxCompressSize || size < minSize {
+		return false
+	}
+	if bounds.max != 0 && size > bounds.max {
 		return false
 	}
 
