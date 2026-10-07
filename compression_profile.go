@@ -92,7 +92,7 @@ func autoCompressionMayApply(entryPath string) bool {
 	switch strings.ToLower(path.Ext(NormalizePath(entryPath))) {
 	case ".ae", ".agf", ".agr", ".anm", ".asi", ".ast", ".asy", ".aw", ".bisurf",
 		".bin", ".c", ".cfg", ".cpp", ".csv", ".emat", ".fnt", ".hpp", ".imageset",
-		".json", ".layout", ".map", ".md", ".meta", ".pac", ".paa", ".ptc", ".p3d",
+		".json", ".layout", ".map", ".md", ".meta", ".ptc", ".p3d",
 		".ragdoll", ".rvmat", ".seq", ".styles", ".tga", ".txt", ".xml", ".wrp":
 		return true
 
@@ -109,12 +109,6 @@ func autoCompressionBounds(entryPath string, prefix []byte) (compressionSizeBoun
 	switch strings.ToLower(path.Ext(NormalizePath(entryPath))) {
 	case ".ae", ".agf", ".agr", ".asi", ".ast", ".asy", ".aw", ".ragdoll", ".seq":
 		return defaultBounds, result.Type != bimime.UnknownID
-
-	case ".pac":
-		return compressionSizeBounds{min: 128, max: 128 << 10}, result.Type == "image.paa"
-
-	case ".paa":
-		return compressionSizeBounds{min: 128, max: 16 << 10}, result.Type == "image.paa"
 
 	case ".anm":
 		return compressionSizeBounds{min: 128}, result.ByPath == "bi.animation.anm"

@@ -34,7 +34,7 @@ func TestAutoCompressionMatchesFormat(t *testing.T) {
 		{name: "unknown map", path: "world/other.map", want: false},
 		{name: "RAP config", path: "config.bin", data: "\x00raP\x00\x00\x00\x00\x08\x00", want: true},
 		{name: "unknown binary", path: "a.bin", data: "RAP\x00", want: false},
-		{name: "paa", path: "a.paa", data: "any", want: true},
+		{name: "paa excluded", path: "a.paa", data: "any", want: false},
 		{name: "ogg", path: "a.ogg", data: "OggS", want: false},
 		{name: "text config", path: "a.cpp", data: "class CfgPatches {};", want: true},
 		{name: "binary config extension", path: "a.cpp", data: "\x00\x01", want: false},
@@ -55,7 +55,7 @@ func TestAutoCompressionMatchesFormat(t *testing.T) {
 		{name: "binary fnt", path: "fonts/font.fnt", data: "FORM\x00\x00\x00\x00FNT!", want: true},
 		{name: "valid tga", path: "images/a.tga", data: string([]byte{0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 2, 0, 24, 0}), want: true},
 		{name: "invalid tga", path: "images/a.tga", data: "not a tga header!", want: false},
-		{name: "pac", path: "a.pac", data: "binary", want: true},
+		{name: "pac excluded", path: "a.pac", data: "binary", want: false},
 		{name: "unknown extension", path: "a.unknown", data: "text", want: false},
 	}
 
@@ -125,6 +125,37 @@ func TestSelectCompressionInputExplicitRulesSkipSniffing(t *testing.T) {
 	}
 }
 
+func TestSelectCompressionInputExplicitRulesAllowTextureFormats(t *testing.T) {
+	t.Parallel()
+
+	for _, ext := range []string{"paa", "pac"} {
+		t.Run(ext, func(t *testing.T) {
+			t.Parallel()
+
+			path := "texture." + ext
+			opts := PackOptions{Compress: true, CompressRules: includeRules("*." + ext)}
+			opts.applyDefaults()
+			matcher, err := newCompressMatcher(opts.CompressRules, opts.CompressMatcherOptions)
+			if err != nil {
+				t.Fatalf("newCompressMatcher: %v", err)
+			}
+
+			selection, err := selectCompressionInput(
+				opts,
+				matcher,
+				Input{Path: path, SizeHint: 1024},
+				strings.NewReader("texture"),
+			)
+			if err != nil {
+				t.Fatalf("selectCompressionInput: %v", err)
+			}
+			if !selection.candidate {
+				t.Fatal("explicit rule did not select texture format")
+			}
+		})
+	}
+}
+
 func TestSelectCompressionInputReplaysNonCandidate(t *testing.T) {
 	t.Parallel()
 
@@ -162,8 +193,8 @@ func TestAutomaticCompressionSizeBounds(t *testing.T) {
 		min  uint32
 		max  uint32
 	}{
-		{name: "small paa included", path: "a.paa", size: 1024, want: true},
-		{name: "large paa excluded", path: "a.paa", size: 32 << 10, want: false},
+		{name: "paa excluded", path: "a.paa", size: 1024, want: false},
+		{name: "pac excluded", path: "a.pac", size: 1024, want: false},
 		{name: "small odol included", path: "a.p3d", data: []byte("ODOL"), size: 64 << 10, want: true},
 		{name: "large odol excluded", path: "a.p3d", data: []byte("ODOL"), size: 256 << 10, want: false},
 		{name: "large mlod included", path: "a.p3d", data: []byte("MLOD"), size: 1 << 20, want: true},
