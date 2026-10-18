@@ -27,8 +27,7 @@ func BenchmarkOpenParse(b *testing.B) {
 	path := createBenchPBO(b, benchDefaultEntries)
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		r, err := Open(path)
 		if err != nil {
 			b.Fatal(err)
@@ -42,8 +41,7 @@ func BenchmarkOpenParseLargeIndex(b *testing.B) {
 	path := createBenchLargeIndexPBO(b, benchLargeIndexEntries)
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		r, err := Open(path)
 		if err != nil {
 			b.Fatal(err)
@@ -62,8 +60,7 @@ func BenchmarkOpenParseLargePayloadFewEntries(b *testing.B) {
 	path := createBenchLargePayloadPBO(b, 32<<20)
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		r, err := Open(path)
 		if err != nil {
 			b.Fatal(err)
@@ -91,31 +88,19 @@ func BenchmarkExtractManySmall(b *testing.B) {
 	}
 	defer func() { _ = r.Close() }()
 
-	for _, continueOnError := range []bool{false, true} {
-		name := "fail_fast"
-		if continueOnError {
-			name = "continue_on_error"
-		}
-		b.Run(name, func(b *testing.B) {
-			dir := b.TempDir()
-			opts := ExtractOptions{
-				MaxWorkers:      4,
-				ContinueOnError: continueOnError,
-			}
+	dir := b.TempDir()
+	opts := ExtractOptions{MaxWorkers: 4}
 
-			b.ReportAllocs()
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				out := filepath.Join(dir, fmt.Sprintf("run%d", i))
-				if err := r.Extract(context.Background(), out, opts); err != nil {
-					b.Fatal(err)
-				}
-			}
-		})
+	b.ReportAllocs()
+	for i := 0; b.Loop(); i++ {
+		out := filepath.Join(dir, fmt.Sprintf("run%d", i))
+		if err := r.Extract(context.Background(), out, opts); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
-func BenchmarkListLargeIndex(b *testing.B) {
+func BenchmarkEntriesCopyLargeIndex(b *testing.B) {
 	path := createBenchLargeIndexPBO(b, benchLargeIndexEntries)
 	r, err := Open(path)
 	if err != nil {
@@ -123,22 +108,18 @@ func BenchmarkListLargeIndex(b *testing.B) {
 	}
 	defer func() { _ = r.Close() }()
 
-	entries := r.Entries()
-	if len(entries) == 0 {
+	if len(r.entries) == 0 {
 		b.Fatal("empty entries")
 	}
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		total := 0
-		for _, e := range entries {
-			total += len(e.Path)
-			total += int(e.DataSize)
-			total += int(e.OriginalSize)
+	for b.Loop() {
+		entries := r.Entries()
+		if len(entries) == 0 {
+			b.Fatal("empty entries")
 		}
 
-		benchListSink = total
+		benchListSink = len(entries)
 	}
 }
 
@@ -167,8 +148,7 @@ func BenchmarkEntriesWithOptionsSanitizedLargeIndex(b *testing.B) {
 	for _, benchmark := range benchmarks {
 		b.Run(benchmark.name, func(b *testing.B) {
 			b.ReportAllocs()
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
+			for b.Loop() {
 				entries, err := r.EntriesWithOptions(benchmark.opts)
 				if err != nil {
 					b.Fatal(err)
@@ -193,8 +173,7 @@ func BenchmarkLookupEntryLinearLargeIndex(b *testing.B) {
 	}
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := 0; b.Loop(); i++ {
 		name := names[i%len(names)]
 		info := linearFindEntryByName(r.entries, name)
 		if info == nil {
@@ -222,8 +201,7 @@ func BenchmarkLookupEntryIndexedLargeIndex(b *testing.B) {
 	_ = r.findEntryByName(names[0])
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := 0; b.Loop(); i++ {
 		name := names[i%len(names)]
 		info := r.findEntryByName(name)
 		if info == nil {
@@ -244,8 +222,7 @@ func benchmarkExtractWithSanitize(b *testing.B, sanitizeNames bool) {
 	}
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := 0; b.Loop(); i++ {
 		r, err := Open(path)
 		if err != nil {
 			b.Fatal(err)
@@ -299,8 +276,7 @@ func BenchmarkComputeHashSetLargeIndex(b *testing.B) {
 	path := createBenchLargeIndexPBO(b, benchLargeIndexEntries)
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if _, err := ComputeHashSet(path, SignVersionV3, GameTypeDayZ); err != nil {
 			b.Fatal(err)
 		}
@@ -323,8 +299,7 @@ func BenchmarkPackNoCompress(b *testing.B) {
 	dir := b.TempDir()
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := 0; b.Loop(); i++ {
 		out := filepath.Join(dir, fmt.Sprintf("out%d.pbo", i))
 		f, _ := os.Create(out)
 		_, err := Pack(context.Background(), f, inputs, opts)
@@ -351,8 +326,7 @@ func BenchmarkPackWithCompress(b *testing.B) {
 	dir := b.TempDir()
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := 0; b.Loop(); i++ {
 		out := filepath.Join(dir, fmt.Sprintf("out%d.pbo", i))
 		f, _ := os.Create(out)
 		_, err := Pack(context.Background(), f, inputs, opts)
@@ -382,8 +356,7 @@ func BenchmarkPackWithCompressFalseLowSizeHint(b *testing.B) {
 	dir := b.TempDir()
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := 0; b.Loop(); i++ {
 		out := filepath.Join(dir, fmt.Sprintf("false-low-%d.pbo", i))
 		f, err := os.Create(out)
 		if err != nil {
@@ -413,8 +386,7 @@ func BenchmarkPackWithCompressNoMatch(b *testing.B) {
 	dir := b.TempDir()
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := 0; b.Loop(); i++ {
 		out := filepath.Join(dir, fmt.Sprintf("out%d.pbo", i))
 		f, _ := os.Create(out)
 		_, err := Pack(context.Background(), f, inputs, opts)
@@ -441,8 +413,7 @@ func BenchmarkPackAndHash(b *testing.B) {
 	dir := b.TempDir()
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := 0; b.Loop(); i++ {
 		out := filepath.Join(dir, fmt.Sprintf("out%d.pbo", i))
 		f, _ := os.OpenFile(out, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o600)
 		_, _, err := PackAndHash(context.Background(), f, inputs, opts, SignVersionV3, GameTypeDayZ)
@@ -459,8 +430,7 @@ func BenchmarkEditAdd(b *testing.B) {
 	addPayload := bytes.Repeat([]byte("add"), 2048)
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := 0; b.Loop(); i++ {
 		out := filepath.Join(dir, fmt.Sprintf("edit-add-%d.pbo", i))
 		if err := copyBenchFile(template, out); err != nil {
 			b.Fatal(err)
@@ -501,8 +471,7 @@ func BenchmarkEditReplace(b *testing.B) {
 	replacePayload := bytes.Repeat([]byte("replace"), 2048)
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := 0; b.Loop(); i++ {
 		out := filepath.Join(dir, fmt.Sprintf("edit-replace-%d.pbo", i))
 		if err := copyBenchFile(template, out); err != nil {
 			b.Fatal(err)
@@ -542,8 +511,7 @@ func BenchmarkEditDelete(b *testing.B) {
 	dir := b.TempDir()
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := 0; b.Loop(); i++ {
 		out := filepath.Join(dir, fmt.Sprintf("edit-delete-%d.pbo", i))
 		if err := copyBenchFile(template, out); err != nil {
 			b.Fatal(err)
@@ -580,14 +548,12 @@ func BenchmarkEditorDeleteDirLargeIndexMultiplePrefixes(b *testing.B) {
 	}
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		applyEditDeleteDir(state, prefixes)
 		for _, index := range removed {
 			state[index].alive = true
 		}
 	}
-	b.StopTimer()
 	b.ReportMetric(float64(len(state)), "entries")
 	b.ReportMetric(float64(len(prefixes)), "prefixes")
 }
@@ -609,8 +575,7 @@ func BenchmarkSealedTransform64MiBCountingIO(b *testing.B) {
 	var readCalls, writeCalls int64
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		ra := &countingReaderAt{ReaderAt: bytes.NewReader(data)}
 		wa := &countingWriterAt{data: data}
 		if err := applySealedTransformToReadWriteAt(ra, wa, int64(len(data)), &key, false); err != nil {
@@ -619,7 +584,6 @@ func BenchmarkSealedTransform64MiBCountingIO(b *testing.B) {
 		readCalls = ra.calls
 		writeCalls = wa.calls
 	}
-	b.StopTimer()
 	b.ReportMetric(float64(readCalls), "readat/op")
 	b.ReportMetric(float64(writeCalls), "writeat/op")
 }
@@ -637,8 +601,7 @@ func benchmarkReadEntryMemory(b *testing.B, compressed bool) {
 
 	b.ReportAllocs()
 	b.SetBytes(int64(len(payload)))
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		data, err := r.ReadEntry(entryPath)
 		if err != nil {
 			b.Fatal(err)
@@ -863,8 +826,7 @@ func BenchmarkPackLargeIndexMemory(b *testing.B) {
 	opts := PackOptions{}
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		var sb seekBuffer
 		if _, err := Pack(context.Background(), &sb, inputs, opts); err != nil {
 			b.Fatal(err)
@@ -881,8 +843,7 @@ func BenchmarkPackLargeIndexFile(b *testing.B) {
 	dir := b.TempDir()
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := 0; b.Loop(); i++ {
 		out := filepath.Join(dir, fmt.Sprintf("large%d.pbo", i))
 		f, err := os.Create(out)
 		if err != nil {
@@ -904,8 +865,7 @@ func BenchmarkPackAndHashFileLargeIndex(b *testing.B) {
 	dir := b.TempDir()
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := 0; b.Loop(); i++ {
 		out := filepath.Join(dir, fmt.Sprintf("large%d.pbo", i))
 		_, _, err := PackAndHashFile(context.Background(), out, inputs, opts, SignVersionV3, GameTypeDayZ)
 		if err != nil {
