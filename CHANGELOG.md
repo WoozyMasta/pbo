@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning][].
 ### Removed
 -->
 
-## Unreleased
+## [0.4.0][] - 2026-10-19
 
 ### Added
 
@@ -22,22 +22,21 @@ and this project adheres to [Semantic Versioning][].
   filtered entry views through `Reader.EntriesWithOptions`,
   and editor operations for targeting duplicate entries
   by index and changing header properties.
-* Added an automatic compression profile for known DayZ formats.
+* Added an automatic format-aware compression profile for known DayZ formats.
 
 ### Changed
 
-* Compression is enabled with `PackOptions.Compress`;
-  `CompressRules` now explicitly overrides the automatic profile.
-  The profile classifies content and size, including ODOL assets,
-  text `.bisurf`, `.cfg`, `.csv`, `.imageset`, `.layout`, `.md`,
-  `.meta`, `.ptc`, and `.styles` files, binary `.fnt` and `.tga` assets,
-  and DayZ areaflags maps. PAA and PAC textures are excluded by default;
-  explicit `CompressRules` can include them.
+* `PackOptions.Compress` uses the automatic profile
+  when no `CompressRules` are supplied.
+  Explicit rules override the profile;
+  PAA and PAC textures are excluded unless explicitly included.
 * `Reader.Entries`, `EntriesView`, path lookup,
   and default extraction use raw archive paths.
   Derived filtering and sanitization are explicit
   through `Reader.EntriesWithOptions`;
   duplicate entries stay in source order and path lookup returns first match.
+* `ReadEntry` reads raw payloads into an exact-size buffer
+  and decodes compressed entries directly into a pre-sized buffer.
 * Editor preserves untouched entries' source order, raw paths, metadata,
   and packed payloads. New entries are appended;
   path-based replacement and deletion return an ambiguity error
@@ -48,9 +47,9 @@ and this project adheres to [Semantic Versioning][].
   only after the complete archive and SHA1 trailer have been written.
 * Path matching normalizes separators and folds ASCII case.
   Sanitized Unicode path segments remain valid UTF-8 when shortened.
-* Parser limits now bound header fields, properties,
-  entry names, and index records.
-  Compression candidates that exceed `MaxCompressSize`
+* Parser limits bound header fields, properties, entry names, and index records;
+  index metadata allocation no longer scales with archive payload size.
+* Compression candidates that exceed `MaxCompressSize`
   fall back to raw streaming.
 * Header-only reads of sealed archives skip payload reads.
   In `TrailerModeAuto`, they do not verify the trailer;
@@ -69,6 +68,8 @@ and this project adheres to [Semantic Versioning][].
 
 * Extraction confines filesystem access to `os.Root`,
   preventing archive paths and symlinks from escaping the destination.
+
+[0.4.0]: https://github.com/WoozyMasta/pbo/compare/v0.3.0...v0.4.0
 
 ## [0.3.0][] - 2026-07-01
 
