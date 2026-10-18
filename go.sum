@@ -1,6 +1,6 @@
 github.com/woozymasta/bimime v0.3.0 h1:QuAA8VBhA6e+qgEp9BuSj2cxwuzVjRdq2Bns4JhsyPQ=
 github.com/woozymasta/bimime v0.3.0/go.mod h1:73SVSr0qNfkd/93yfOAusXAeIfxQUvcDBRK8W320AcU=
-github.com/woozymasta/lzss v0.2.0 h1:kSns5tkmcbyRE0woY/i0AcLc0DD1P0/tD3hY6Y/xtLs=
-github.com/woozymasta/lzss v0.2.0/go.mod h1:3P9MZicG+a7UJ+4m4x+QWFgnvKI9Vgd7oobmu5DOFsw=
+github.com/woozymasta/lzss v0.3.0 h1:lotwPyB6++xv/zHxkZEOFrraGd+Xd/U0b8IZLDool5I=
+github.com/woozymasta/lzss v0.3.0/go.mod h1:+Y2qv2tzElN3GxlKC7dsx9Rnn+iqNqmFuIJlQHtChk0=
 github.com/woozymasta/pathrules v0.3.0 h1:4lXcdesFSDMnRt4XIoYgoRWf4uCnl+r8rzD6ptqqQjw=
 github.com/woozymasta/pathrules v0.3.0/go.mod h1:0401/EsfFK1efQsnCcVTqE5ZH7FeBbE+odbO1/3mM2I=

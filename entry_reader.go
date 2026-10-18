@@ -5,6 +5,7 @@
 package pbo
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"math"
@@ -157,7 +158,7 @@ func (r *Reader) readEntryByInfo(info *EntryInfo, name string) ([]byte, error) {
 		return nil, fmt.Errorf("resolve output size for %s: %w", name, err)
 	}
 
-	data, _, err := lzss.DecompressFromReader(sr, outLen, nil)
+	data, _, err := lzss.DecompressFromReader(bufio.NewReaderSize(sr, lzss.WindowSize), outLen, nil)
 	if err != nil {
 		return nil, fmt.Errorf("decompress entry %s: %w", name, err)
 	}
@@ -167,7 +168,7 @@ func (r *Reader) readEntryByInfo(info *EntryInfo, name string) ([]byte, error) {
 
 // streamDecompressEntry decodes one compressed entry stream into pipe writer.
 func streamDecompressEntry(name string, dst *io.PipeWriter, src io.Reader, outLen int) {
-	_, err := lzss.DecompressToWriter(dst, src, outLen, nil)
+	_, err := lzss.DecompressToWriter(dst, bufio.NewReaderSize(src, lzss.WindowSize), outLen, nil)
 	if err != nil {
 		_ = dst.CloseWithError(fmt.Errorf("decompress entry %s: %w", name, err))
 		return
@@ -226,7 +227,12 @@ func (r *Reader) copyEntryPayloadTo(info *EntryInfo, dst io.Writer, buf []byte) 
 		return int64(len(data)), nil
 	}
 
-	if _, err := lzss.DecompressToWriter(dst, sr, outLen, nil); err != nil {
+	if _, err := lzss.DecompressToWriter(
+		dst,
+		bufio.NewReaderSize(sr, lzss.WindowSize),
+		outLen,
+		nil,
+	); err != nil {
 		return 0, err
 	}
 
