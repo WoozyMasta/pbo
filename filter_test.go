@@ -63,6 +63,72 @@ func TestEntriesWithOptions_PrefixFilter(t *testing.T) {
 	}
 }
 
+func TestEntriesWithOptionsIndexed_SanitizedFilteredView(t *testing.T) {
+	t.Parallel()
+
+	path := createManualPBOWithNamedEntries(t, []manualEntry{
+		{name: `other\skip.txt`, data: []byte("0")},
+		{name: `data\CON.txt`, data: []byte("1")},
+		{name: `data\a:b.txt`, data: []byte("2")},
+		{name: `data\a?b.txt`, data: []byte("3")},
+		{name: `root.txt`, data: []byte("4")},
+	})
+	r, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = r.Close() }()
+
+	view, err := r.EntriesWithOptionsIndexed(EntryViewOptions{
+		PathPrefix:    "data",
+		SanitizeNames: true,
+	})
+	if err != nil {
+		t.Fatalf("EntriesWithOptionsIndexed: %v", err)
+	}
+
+	wantPaths := []string{"data/_CON.txt", "data/a_b.txt", "data/a_b~2.txt"}
+	wantIndices := []int{1, 2, 3}
+	if len(view) != len(wantPaths) {
+		t.Fatalf("len(view)=%d, want %d", len(view), len(wantPaths))
+	}
+	for i := range wantPaths {
+		if view[i].Entry.Path != wantPaths[i] {
+			t.Errorf("view[%d].Entry.Path=%q, want %q", i, view[i].Entry.Path, wantPaths[i])
+		}
+		if view[i].SourceIndex != wantIndices[i] {
+			t.Errorf("view[%d].SourceIndex=%d, want %d", i, view[i].SourceIndex, wantIndices[i])
+		}
+		if view[i].ParentPath != "data" {
+			t.Errorf("view[%d].ParentPath=%q, want data", i, view[i].ParentPath)
+		}
+	}
+}
+
+func TestEntriesWithOptionsIndexed_RootParentAndNilReader(t *testing.T) {
+	t.Parallel()
+
+	path := createManualPBOWithNamedEntries(t, []manualEntry{
+		{name: "root.txt", data: []byte("root")},
+	})
+	r, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = r.Close() }()
+
+	view, err := r.EntriesWithOptionsIndexed(EntryViewOptions{})
+	if err != nil {
+		t.Fatalf("EntriesWithOptionsIndexed: %v", err)
+	}
+	if len(view) != 1 || view[0].SourceIndex != 0 || view[0].ParentPath != "" {
+		t.Fatalf("unexpected root view: %#v", view)
+	}
+	if _, err := (*Reader)(nil).EntriesWithOptionsIndexed(EntryViewOptions{}); err != ErrNilReader {
+		t.Fatalf("nil reader error=%v, want %v", err, ErrNilReader)
+	}
+}
+
 func TestEntriesWithOptions_SizeFilterAndSanitize(t *testing.T) {
 	t.Parallel()
 

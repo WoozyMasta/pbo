@@ -152,6 +152,38 @@ func ExampleReader_EntriesWithOptions() {
 	// payload
 }
 
+func ExampleReader_EntriesWithOptionsIndexed() {
+	path, cleanup, err := exampleArchive()
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer cleanup()
+
+	r, err := pbo.Open(path)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer func() { _ = r.Close() }()
+
+	view, err := r.EntriesWithOptionsIndexed(pbo.EntryViewOptions{
+		PathPrefix:    "data",
+		SanitizeNames: true,
+	})
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	for _, item := range view {
+		fmt.Printf("source=%d parent=%s path=%s\n", item.SourceIndex, item.ParentPath, item.Entry.Path)
+	}
+
+	// Output:
+	// source=1 parent=data path=data/a_b.txt
+}
+
 func ExampleReader_Extract() {
 	path, cleanup, err := exampleArchive()
 	if err != nil {

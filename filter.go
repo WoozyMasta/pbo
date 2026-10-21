@@ -28,8 +28,27 @@ type EntryViewOptions struct {
 	SanitizeNames bool `json:"sanitize_names,omitempty" yaml:"sanitize_names,omitempty"`
 }
 
+// EntryViewEntry pairs a derived entry with its index in the raw archive list.
+type EntryViewEntry struct {
+	// ParentPath is the slash-separated parent path, or empty for a root entry.
+	ParentPath string `json:"parent_path,omitempty" yaml:"parent_path,omitempty"`
+	// Entry contains metadata after applying the requested view options.
+	Entry EntryInfo `json:"entry" yaml:"entry"`
+	// SourceIndex is the zero-based index used by Reader.EntriesView and Editor methods.
+	SourceIndex int `json:"source_index" yaml:"source_index"`
+}
+
 // applyEntryViewOptions derives a filtered or sanitized view without modifying raw entries.
 func applyEntryViewOptions(entries []EntryInfo, opts EntryViewOptions) ([]EntryInfo, error) {
+	return applyEntryViewOptionsWithSourceIndices(entries, opts, nil)
+}
+
+// applyEntryViewOptionsWithSourceIndices optionally records each output entry's raw index.
+func applyEntryViewOptionsWithSourceIndices(
+	entries []EntryInfo,
+	opts EntryViewOptions,
+	sourceIndices *[]int,
+) ([]EntryInfo, error) {
 	if len(entries) == 0 {
 		return entries, nil
 	}
@@ -53,7 +72,7 @@ func applyEntryViewOptions(entries []EntryInfo, opts EntryViewOptions) ([]EntryI
 		opts.MinOriginalSize == 0 &&
 		opts.MinDataSize == 0 &&
 		!opts.FilterASCIIOnly
-	if onlySanitizeNames {
+	if onlySanitizeNames && sourceIndices == nil {
 		if normalizedPrefix == "" {
 			return sanitizeEntryInfoPaths(entries)
 		}
@@ -68,7 +87,7 @@ func applyEntryViewOptions(entries []EntryInfo, opts EntryViewOptions) ([]EntryI
 		opts.MinDataSize == 0 &&
 		!opts.FilterASCIIOnly &&
 		normalizedPrefix == ""
-	if onlySanitizeControlChars {
+	if onlySanitizeControlChars && sourceIndices == nil {
 		return sanitizeEntryInfoControlPaths(entries)
 	}
 
@@ -84,7 +103,7 @@ func applyEntryViewOptions(entries []EntryInfo, opts EntryViewOptions) ([]EntryI
 		normalizedPrefix != "" ||
 		opts.SanitizeControlChars ||
 		opts.SanitizeNames
-	if !needsView {
+	if !needsView && sourceIndices == nil {
 		return entries, nil
 	}
 
@@ -152,6 +171,9 @@ func applyEntryViewOptions(entries []EntryInfo, opts EntryViewOptions) ([]EntryI
 
 		entry.Path = path
 		out = append(out, entry)
+		if sourceIndices != nil {
+			*sourceIndices = append(*sourceIndices, i)
+		}
 	}
 
 	return out, nil
