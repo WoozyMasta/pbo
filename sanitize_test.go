@@ -36,6 +36,11 @@ func TestSanitizePathSegment(t *testing.T) {
 		want string
 	}{
 		{in: "CON.txt", want: "_CON.txt"},
+		{in: "CONIN$.txt", want: "_CONIN$.txt"},
+		{in: "CONOUT$.txt", want: "_CONOUT$.txt"},
+		{in: "COM¹.log", want: "_COM¹.log"},
+		{in: "com²", want: "_com²"},
+		{in: "LPT³.log", want: "_LPT³.log"},
 		{in: "  COM8.c  ", want: "_COM8.c"},
 		{in: ".{22877a6d-37a1-461a-91b0-dbda5aaebc99}", want: "_{22877a6d-37a1-461a-91b0-dbda5aaebc99}"},
 		{in: "abc.{22877a6d-37a1-461a-91b0-dbda5aaebc99}", want: "abc_{22877a6d-37a1-461a-91b0-dbda5aaebc99}"},
@@ -61,6 +66,31 @@ func TestSanitizePathSegment(t *testing.T) {
 		if got != tc.want {
 			t.Fatalf("sanitizePathSegment(%q)=%q, want %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+// TestSanitizePathPreservesNumericVersionComponents prevents numeric names from aliasing device names.
+func TestSanitizePathPreservesNumericVersionComponents(t *testing.T) {
+	t.Parallel()
+
+	paths := []string{
+		"4",
+		"4.5.2",
+		"9.0",
+		"packages/4.5.2",
+	}
+	for _, path := range paths {
+		t.Run(path, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := SanitizePath(path)
+			if err != nil {
+				t.Fatalf("SanitizePath(%q): %v", path, err)
+			}
+			if got != path {
+				t.Fatalf("SanitizePath(%q)=%q, want unchanged path", path, got)
+			}
+		})
 	}
 }
 

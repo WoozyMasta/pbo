@@ -14,6 +14,18 @@ and this project adheres to [Semantic Versioning][].
 ### Removed
 -->
 
+## Unreleased
+
+### Added
+
+* Added `Reader.EntriesWithOptionsIndexed` to build reusable derived views
+  with source entry indices and parent paths.
+
+### Changed
+
+* Sanitization rewrites Windows device aliases,
+  including `CONIN$`, `CONOUT$`, and the superscript-digit `COM`/`LPT` names.
+
 ## [0.4.0][] - 2026-10-19
 
 ### Added

@@ -41,7 +41,12 @@ var (
 		"com7":     {},
 		"com8":     {},
 		"com9":     {},
+		"com¹":     {},
+		"com²":     {},
+		"com³":     {},
 		"con":      {},
+		"conin$":   {},
+		"conout$":  {},
 		"config$":  {},
 		"dblssys$": {},
 		"dpmixxx0": {},
@@ -63,6 +68,9 @@ var (
 		"lpt7":     {},
 		"lpt8":     {},
 		"lpt9":     {},
+		"lpt¹":     {},
+		"lpt²":     {},
+		"lpt³":     {},
 		"lst":      {},
 		"mouse$":   {},
 		"ndosstak": {},
@@ -240,6 +248,10 @@ func sanitizeRelativePathWith(relativePath string, sanitizeSegment func(string) 
 
 // sanitizePathSegment sanitizes one path segment for broad filesystem compatibility.
 func sanitizePathSegment(segment string) (string, error) {
+	if isAlreadySafeASCIIPathSegment(segment) {
+		return segment, nil
+	}
+
 	segment = strings.TrimSpace(segment)
 	if segment == "" {
 		return "_", nil
@@ -279,6 +291,32 @@ func sanitizePathSegment(segment string) (string, error) {
 	}
 
 	return sanitized, nil
+}
+
+// isAlreadySafeASCIIPathSegment reports whether an ASCII segment needs no rewrite.
+func isAlreadySafeASCIIPathSegment(segment string) bool {
+	if len(segment) == 0 || len(segment) > maxSanitizedSegmentLen ||
+		segment[0] == ' ' || segment[len(segment)-1] == ' ' || segment[len(segment)-1] == '.' {
+		return false
+	}
+
+	for i := 0; i < len(segment); i++ {
+		c := segment[i]
+		if c < 0x20 || c >= 0x7f {
+			return false
+		}
+
+		switch c {
+		case '<', '>', ':', '"', '/', '\\', '|', '?', '*':
+			return false
+		}
+	}
+
+	if strings.Contains(segment, ".{") || isReservedDeviceName(segment) {
+		return false
+	}
+
+	return true
 }
 
 // sanitizeControlCharPathSegment sanitizes one path segment for safe text output.
