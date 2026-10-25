@@ -5,6 +5,7 @@
 package pbo_test
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -178,10 +179,18 @@ func ExampleReader_EntriesWithOptionsIndexed() {
 
 	for _, item := range view {
 		fmt.Printf("source=%d parent=%s path=%s\n", item.SourceIndex, item.ParentPath, item.Entry.Path)
+		var payload bytes.Buffer
+		if _, err := r.CopyEntryInfoTo(item.Entry, &payload, nil); err != nil {
+			fmt.Println(err)
+			return
+		}
+
+		fmt.Println(payload.String())
 	}
 
 	// Output:
 	// source=1 parent=data path=data/a_b.txt
+	// payload
 }
 
 func ExampleReader_Extract() {

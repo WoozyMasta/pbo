@@ -70,6 +70,59 @@ func TestReaderEntryViewsKeepRawEntriesAndPayloadIdentity(t *testing.T) {
 	}
 }
 
+func TestEntryInfoAccessAvoidsLazyNameIndex(t *testing.T) {
+	t.Parallel()
+
+	path := createManualPBOWithNamedEntries(t, []manualEntry{
+		{name: "preview/open.txt", data: []byte("open")},
+		{name: "preview/copy.txt", data: []byte("copy")},
+	})
+	r, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = r.Close() }()
+
+	view, err := r.EntriesWithOptionsIndexed(EntryViewOptions{SanitizeNames: true})
+	if err != nil {
+		t.Fatalf("EntriesWithOptionsIndexed: %v", err)
+	}
+	if r.entryIndex != nil {
+		t.Fatal("building an entry view initialized the name lookup index")
+	}
+
+	stream, err := r.OpenEntryInfo(view[0].Entry)
+	if err != nil {
+		t.Fatalf("OpenEntryInfo: %v", err)
+	}
+	opened, err := io.ReadAll(stream)
+	_ = stream.Close()
+	if err != nil {
+		t.Fatalf("read OpenEntryInfo: %v", err)
+	}
+	if !bytes.Equal(opened, []byte("open")) {
+		t.Fatalf("OpenEntryInfo data=%q, want open", opened)
+	}
+
+	var copied bytes.Buffer
+	if _, err := r.CopyEntryInfoTo(view[1].Entry, &copied, nil); err != nil {
+		t.Fatalf("CopyEntryInfoTo: %v", err)
+	}
+	if copied.String() != "copy" {
+		t.Fatalf("CopyEntryInfoTo data=%q, want copy", copied.String())
+	}
+	if r.entryIndex != nil {
+		t.Fatal("EntryInfo access initialized the name lookup index")
+	}
+
+	if _, err := r.ReadEntry("preview/open.txt"); err != nil {
+		t.Fatalf("ReadEntry: %v", err)
+	}
+	if r.entryIndex == nil {
+		t.Fatal("name lookup did not initialize the lazy index")
+	}
+}
+
 func TestReaderRawEntriesPreserveDuplicateAndInvalidUTF8Paths(t *testing.T) {
 	t.Parallel()
 

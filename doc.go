@@ -20,6 +20,8 @@ A [Reader] provides ordered headers and entries, path lookup,
 and access to unpacked or packed payloads.
 Use [ReadEntry] to load an entry into memory,
 or [OpenEntry] and [CopyEntryTo] for streaming access.
+When iterating cached [EntryInfo] values, use [Reader.OpenEntryInfo]
+or [Reader.CopyEntryInfoTo] to read payloads without name lookup.
 
 Entries retain their raw archive paths, and duplicate paths remain in source order.
 Lookup normalizes separators, folds ASCII case, and selects the first matching entry.
