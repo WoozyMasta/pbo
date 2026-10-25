@@ -12,15 +12,15 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
-          go-version: '1.27'
+          go-version: stable
 
       - uses: rvben/rumdl@v0
 
       - name: Run CI
-        run: make ci test-race fuzz
+        run: make ci test-race fuzz FUZZ_TIME=5s
 
       - name: Extract changelog
         run: make release-notes > release.md
@@ -33,9 +33,11 @@ jobs:
           bodyFile: release.md
 
       - name: Request pkg.go.dev reindex
+        continue-on-error: true
         env:
-          MODULE: github.com/woozymasta/pbo
           VERSION: ${{ github.ref_name }}
-        run: >-
-          curl -sSfX POST --retry 3 --retry-delay 2
-          "https://pkg.go.dev/fetch/${MODULE}@${VERSION}"
+        run: |
+          MODULE="$(GOWORK=off go list -m)"
+          curl --silent --show-error --fail-with-body \
+            --retry 3 --retry-delay 2 \
+            "https://proxy.golang.org/${MODULE}/@v/${VERSION}.info"
