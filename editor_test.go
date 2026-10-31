@@ -143,7 +143,7 @@ func TestEditorCommit_ReplaceMissingPathFailsAndRestoresSource(t *testing.T) {
 	}
 }
 
-func TestEditorCommit_InputOpenErrorRollsBack(t *testing.T) {
+func TestEditorCommit_InputOpenErrorLeavesSourceUntouched(t *testing.T) {
 	t.Parallel()
 
 	pboPath := filepath.Join(t.TempDir(), "archive.pbo")
@@ -152,6 +152,11 @@ func TestEditorCommit_InputOpenErrorRollsBack(t *testing.T) {
 	}, PackOptions{})
 	if err != nil {
 		t.Fatalf("createTestPBO: %v", err)
+	}
+
+	original, err := os.ReadFile(pboPath)
+	if err != nil {
+		t.Fatalf("read original archive: %v", err)
 	}
 
 	editor, err := OpenEditor(pboPath, EditOptions{BackupKeep: 0})
@@ -180,6 +185,17 @@ func TestEditorCommit_InputOpenErrorRollsBack(t *testing.T) {
 	}
 	if string(got) != "orig" {
 		t.Fatalf("restored payload=%q, want %q", got, "orig")
+	}
+
+	current, err := os.ReadFile(pboPath)
+	if err != nil {
+		t.Fatalf("read source archive after failed commit: %v", err)
+	}
+	if !bytes.Equal(current, original) {
+		t.Fatal("failed commit changed source archive bytes")
+	}
+	if _, err := os.Stat(pboPath + ".bak"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("failed commit created a backup, stat err=%v", err)
 	}
 }
 

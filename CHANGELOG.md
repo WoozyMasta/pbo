@@ -25,6 +25,8 @@ and this project adheres to [Semantic Versioning][].
 
 * Sanitization rewrites Windows device aliases,
   including `CONIN$`, `CONOUT$`, and the superscript-digit `COM`/`LPT` names.
+* `Editor.Commit` builds and syncs the rewritten archive
+  in a temporary file before replacing the source archive.
 
 ## [0.4.0][] - 2026-10-19
 
@@ -183,7 +185,7 @@ and this project adheres to [Semantic Versioning][].
 
 * First public release
 
-[0.1.0]: https://github.com/WoozyMasta/pbo/v0.1.0
+[0.1.0]: https://github.com/WoozyMasta/pbo/tree/v0.1.0
 
 <!--links-->
 [Keep a Changelog]: https://keepachangelog.com/en/1.1.0/

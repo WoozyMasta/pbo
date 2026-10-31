@@ -65,7 +65,8 @@ before replacing the destination and append a SHA1 trailer.
 [OpenEditor] stages changes for one archive rewrite with [Editor.Commit].
 The editor preserves untouched entries' raw paths, metadata, packed payloads,
 and source order; added entries are appended.
-File-based edits can retain and rotate backups.
+It prepares the complete rewritten archive before replacing the source file,
+and can retain and rotate backups.
 
 # Headers and signatures
 

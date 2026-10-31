@@ -246,6 +246,41 @@ func TestFilePack_ReplacesExistingTargetWithVerifiedArchive(t *testing.T) {
 	}
 }
 
+func TestReplaceOutputFileWithBackup_FailurePreservesFiles(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	targetPath := filepath.Join(dir, "target.pbo")
+	tempPath := filepath.Join(dir, "replacement.tmp")
+	backupPath := filepath.Join(dir, "backup")
+	if err := os.WriteFile(targetPath, []byte("old archive"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tempPath, []byte("new archive"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(backupPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := replaceOutputFileWithBackup(tempPath, targetPath, backupPath); err == nil {
+		t.Fatal("replaceOutputFileWithBackup succeeded with an invalid backup target")
+	}
+
+	for path, want := range map[string]string{
+		targetPath: "old archive",
+		tempPath:   "new archive",
+	} {
+		got, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		if string(got) != want {
+			t.Errorf("%s contains %q, want %q", path, got, want)
+		}
+	}
+}
+
 // outputTestInputs returns a repeatable minimal archive input.
 func outputTestInputs() []Input {
 	payload := []byte("new archive")

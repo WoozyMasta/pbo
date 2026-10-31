@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -262,8 +263,8 @@ func (e *Editor) ClearProperties() error {
 	return nil
 }
 
-// Commit applies all staged operations in one rewrite transaction.
-func (e *Editor) Commit(ctx context.Context) (*PackResult, error) {
+// Commit applies staged operations and replaces the source after building a complete archive.
+func (e *Editor) Commit(ctx context.Context) (result *PackResult, resultErr error) {
 	if e == nil {
 		return nil, ErrNilReader
 	}
@@ -272,26 +273,47 @@ func (e *Editor) Commit(ctx context.Context) (*PackResult, error) {
 		ctx = context.Background()
 	}
 
-	backupPath := e.path + ".bak"
-	if err := prepareBackupSlot(backupPath, e.opts.BackupKeep); err != nil {
+	tempFile, err := os.CreateTemp(filepath.Dir(e.path), "."+filepath.Base(e.path)+".tmp-*")
+	if err != nil {
+		return nil, fmt.Errorf("create temporary archive: %w", err)
+	}
+
+	tempPath := tempFile.Name()
+	defer func() {
+		if tempFile != nil {
+			resultErr = errors.Join(resultErr, tempFile.Close())
+		}
+		if err := os.Remove(tempPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			resultErr = errors.Join(resultErr, fmt.Errorf("remove temporary archive: %w", err))
+		}
+	}()
+
+	res, err := e.commitToFile(ctx, tempFile)
+	if err != nil {
 		return nil, err
 	}
 
-	if err := os.Rename(e.path, backupPath); err != nil {
-		return nil, fmt.Errorf("move archive to backup: %w", err)
+	if err := tempFile.Close(); err != nil {
+		tempFile = nil
+		return nil, fmt.Errorf("close temporary archive: %w", err)
 	}
 
-	res, err := e.commitFromBackup(ctx, backupPath)
-	if err != nil {
-		rollbackErr := rollbackFromBackup(e.path, backupPath)
-		if rollbackErr != nil {
-			return nil, fmt.Errorf("%v (rollback failed: %v)", err, rollbackErr)
+	tempFile = nil
+	backupPath := e.path + ".bak"
+	backupKeep := e.opts.BackupKeep
+	backupTarget := ""
+	if backupKeep > 0 {
+		if err := prepareBackupSlot(backupPath, backupKeep); err != nil {
+			return nil, err
 		}
 
-		return nil, err
+		backupTarget = backupPath
 	}
 
-	if e.opts.BackupKeep == 0 {
+	if err := replaceOutputFileWithBackup(tempPath, e.path, backupTarget); err != nil {
+		return nil, err
+	}
+	if backupKeep == 0 {
 		if err := removeIfExists(backupPath); err != nil {
 			return nil, fmt.Errorf("remove backup: %w", err)
 		}
@@ -300,17 +322,17 @@ func (e *Editor) Commit(ctx context.Context) (*PackResult, error) {
 	return res, nil
 }
 
-// commitFromBackup writes edited archive from backup source.
-func (e *Editor) commitFromBackup(ctx context.Context, backupPath string) (*PackResult, error) {
-	srcFile, err := os.Open(backupPath)
+// commitToFile writes the edited archive to an already-created temporary file.
+func (e *Editor) commitToFile(ctx context.Context, dstFile *os.File) (*PackResult, error) {
+	srcFile, err := os.Open(e.path)
 	if err != nil {
-		return nil, fmt.Errorf("open backup: %w", err)
+		return nil, fmt.Errorf("open source archive: %w", err)
 	}
 	defer func() { _ = srcFile.Close() }()
 
 	srcInfo, err := srcFile.Stat()
 	if err != nil {
-		return nil, fmt.Errorf("stat backup: %w", err)
+		return nil, fmt.Errorf("stat source archive: %w", err)
 	}
 
 	packOpts := e.opts.PackOptions
@@ -318,7 +340,7 @@ func (e *Editor) commitFromBackup(ctx context.Context, backupPath string) (*Pack
 		SealedKey: packOpts.SealedKey,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("parse backup: %w", err)
+		return nil, fmt.Errorf("parse source archive: %w", err)
 	}
 
 	plan, err := buildEditPlan(srcReader.entries, e.ops)
@@ -327,16 +349,6 @@ func (e *Editor) commitFromBackup(ctx context.Context, backupPath string) (*Pack
 	}
 
 	packOpts.Headers = applyEditorProperties(srcReader.Headers(), packOpts.Headers, e.propertyOps)
-
-	dstFile, err := os.OpenFile(e.path, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o600)
-	if err != nil {
-		return nil, fmt.Errorf("create destination archive: %w", err)
-	}
-	defer func() {
-		if dstFile != nil {
-			_ = dstFile.Close()
-		}
-	}()
 
 	details, err := rewriteArchiveDetailed(ctx, dstFile, srcReader.ra, plan, packOpts)
 	if err != nil {
@@ -362,11 +374,6 @@ func (e *Editor) commitFromBackup(ctx context.Context, backupPath string) (*Pack
 	if err := dstFile.Sync(); err != nil {
 		return nil, fmt.Errorf("sync destination archive: %w", err)
 	}
-
-	if err := dstFile.Close(); err != nil {
-		return nil, fmt.Errorf("close destination archive: %w", err)
-	}
-	dstFile = nil
 
 	return details.packResult, nil
 }
@@ -615,7 +622,7 @@ func editorPathKey(path string) string {
 	return archiveLookupKey(path)
 }
 
-// prepareBackupSlot rotates/removes existing backup generations before new commit.
+// prepareBackupSlot rotates/removes existing backup generations before replacement.
 func prepareBackupSlot(backupPath string, keep int) error {
 	if keep < 0 {
 		keep = 0
@@ -672,15 +679,4 @@ func removeIfExists(path string) error {
 	}
 
 	return fmt.Errorf("remove %s: %w", path, err)
-}
-
-// rollbackFromBackup restores backup on failed commit.
-func rollbackFromBackup(path string, backupPath string) error {
-	_ = os.Remove(path)
-
-	if err := os.Rename(backupPath, path); err != nil {
-		return fmt.Errorf("restore backup: %w", err)
-	}
-
-	return nil
 }

@@ -419,15 +419,25 @@ func writePackFileAtomically(outPath string, build func(*os.File) error) (result
 	return nil
 }
 
-// replaceOutputFile swaps a complete temporary file into place and restores the old target on failure.
+// replaceOutputFile installs a complete temporary file over its target.
 func replaceOutputFile(tempPath string, outPath string) error {
+	return replaceOutputFileWithBackup(tempPath, outPath, "")
+}
+
+// replaceOutputFileWithBackup installs a complete temporary file and optionally saves the old target.
+func replaceOutputFileWithBackup(tempPath string, outPath string, backupPath string) error {
 	info, err := os.Lstat(outPath)
 	if errors.Is(err, os.ErrNotExist) {
+		if backupPath != "" {
+			return fmt.Errorf("target %q disappeared before replacement", outPath)
+		}
 		if err := os.Rename(tempPath, outPath); err != nil {
 			return fmt.Errorf("install PBO file: %w", err)
 		}
+
 		return nil
 	}
+
 	if err != nil {
 		return fmt.Errorf("inspect existing PBO file: %w", err)
 	}
@@ -435,35 +445,23 @@ func replaceOutputFile(tempPath string, outPath string) error {
 	if info.IsDir() {
 		return fmt.Errorf("output path %q: %w", outPath, ErrInvalidOutputTarget)
 	}
+
+	if backupPath != "" {
+		if _, err := os.Lstat(backupPath); err == nil {
+			return fmt.Errorf("backup path %q already exists", backupPath)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("inspect backup path %q: %w", backupPath, err)
+		}
+	}
+
 	if info.Mode().IsRegular() {
 		if err := os.Chmod(tempPath, info.Mode().Perm()); err != nil {
 			return fmt.Errorf("preserve PBO file permissions: %w", err)
 		}
 	}
 
-	backupFile, err := os.CreateTemp(filepath.Dir(outPath), "."+filepath.Base(outPath)+".bak-*")
-	if err != nil {
-		return fmt.Errorf("reserve output backup: %w", err)
-	}
-	backupPath := backupFile.Name()
-	if err := backupFile.Close(); err != nil {
-		_ = os.Remove(backupPath)
-		return fmt.Errorf("close output backup placeholder: %w", err)
-	}
-
-	if err := os.Rename(outPath, backupPath); err != nil {
-		cleanupErr := os.Remove(backupPath)
-		return errors.Join(fmt.Errorf("move old PBO to backup: %w", err), cleanupErr)
-	}
-	if err := os.Rename(tempPath, outPath); err != nil {
-		restoreErr := os.Rename(backupPath, outPath)
-		if restoreErr != nil {
-			return fmt.Errorf("install new PBO: %w (old PBO remains at %q; restore failed: %v)", err, backupPath, restoreErr)
-		}
-		return fmt.Errorf("install new PBO: %w", err)
-	}
-	if err := os.Remove(backupPath); err != nil {
-		return fmt.Errorf("remove previous PBO backup %q: %w", backupPath, err)
+	if err := replaceExistingOutputFile(tempPath, outPath, backupPath); err != nil {
+		return fmt.Errorf("replace PBO file: %w", err)
 	}
 
 	return nil
