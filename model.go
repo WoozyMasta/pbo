@@ -201,6 +201,26 @@ const (
 	TrailerModeAbsent TrailerMode = "absent"
 )
 
+// TrailerStatus reports the known state of a plain PBO's optional SHA1 trailer.
+type TrailerStatus uint32
+
+const (
+	// TrailerStatusUnknown means the status is unavailable, including for sealed archives.
+	TrailerStatusUnknown TrailerStatus = iota
+	// TrailerStatusAbsent means no structurally plausible trailer was detected.
+	TrailerStatusAbsent
+	// TrailerStatusCandidate means a trailer candidate was detected but not verified.
+	TrailerStatusCandidate
+	// TrailerStatusVerifying means the candidate hash is being checked.
+	TrailerStatusVerifying
+	// TrailerStatusVerified means the candidate hash matches the archive contents.
+	TrailerStatusVerified
+	// TrailerStatusInvalid means the candidate hash does not match the archive contents.
+	TrailerStatusInvalid
+	// TrailerStatusFailed means trailer verification could not complete due to an error.
+	TrailerStatusFailed
+)
+
 // ReaderOptions configures archive decoding and format interpretation.
 type ReaderOptions struct {
 	// SealedKey enables sealed archive decode when set.
@@ -328,5 +348,25 @@ func (opts *EditOptions) applyDefaults() {
 
 	if opts.BackupKeep < 0 {
 		opts.BackupKeep = 0
+	}
+}
+
+// String returns the trailer status name.
+func (s TrailerStatus) String() string {
+	switch s {
+	case TrailerStatusAbsent:
+		return "absent"
+	case TrailerStatusCandidate:
+		return "candidate"
+	case TrailerStatusVerifying:
+		return "verifying"
+	case TrailerStatusVerified:
+		return "verified"
+	case TrailerStatusInvalid:
+		return "invalid"
+	case TrailerStatusFailed:
+		return "failed"
+	default:
+		return "unknown"
 	}
 }

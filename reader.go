@@ -15,6 +15,7 @@ import (
 	"os"
 	"path"
 	"sync"
+	"sync/atomic"
 )
 
 const (
@@ -73,6 +74,8 @@ type Reader struct {
 	trailerCandidate bool
 	// trailerVerified reports whether the candidate digest matches archive content.
 	trailerVerified bool
+	// trailerStatus stores the non-blocking verification state for plain archives.
+	trailerStatus atomic.Uint32
 	// closed reports whether Close was already called.
 	closed bool
 }
@@ -253,6 +256,7 @@ func (r *Reader) Close() error {
 }
 
 // SHA1Trailer returns the optional trailer digest only when its content hash verifies.
+// Verification reads the archive contents; call it from a worker when needed.
 func (r *Reader) SHA1Trailer() ([20]byte, bool) {
 	if r == nil || !r.trailerCandidate {
 		var z [20]byte
@@ -260,14 +264,37 @@ func (r *Reader) SHA1Trailer() ([20]byte, bool) {
 	}
 
 	r.trailerVerifyOnce.Do(func() {
+		plainArchive := true
+		if _, sealed := r.ra.(*sealedReaderAt); sealed {
+			plainArchive = false
+		}
+		if plainArchive {
+			r.trailerStatus.Store(uint32(TrailerStatusVerifying))
+		}
+
 		r.mu.Lock()
 		defer r.mu.Unlock()
 		if r.closed {
+			if plainArchive {
+				r.trailerStatus.Store(uint32(TrailerStatusFailed))
+			}
 			return
 		}
 
 		got, ok, err := verifySHA1Trailer(r.rawReaderAt(), r.size)
 		r.trailerVerified = err == nil && ok && got == r.sha1Trailer
+		if plainArchive {
+			switch {
+			case err != nil:
+				r.trailerStatus.Store(uint32(TrailerStatusFailed))
+
+			case r.trailerVerified:
+				r.trailerStatus.Store(uint32(TrailerStatusVerified))
+
+			default:
+				r.trailerStatus.Store(uint32(TrailerStatusInvalid))
+			}
+		}
 	})
 
 	if !r.trailerVerified {
@@ -276,6 +303,27 @@ func (r *Reader) SHA1Trailer() ([20]byte, bool) {
 	}
 
 	return r.sha1Trailer, true
+}
+
+// TrailerStatus returns the known plain-archive trailer state without reading payload data.
+// Sealed archives and nil readers return TrailerStatusUnknown.
+// Call SHA1Trailer from a worker to verify a candidate without blocking the caller.
+func (r *Reader) TrailerStatus() TrailerStatus {
+	if r == nil || r.ra == nil {
+		return TrailerStatusUnknown
+	}
+	if _, sealed := r.ra.(*sealedReaderAt); sealed {
+		return TrailerStatusUnknown
+	}
+	if status := TrailerStatus(r.trailerStatus.Load()); status != TrailerStatusUnknown {
+		return status
+	}
+
+	if r.trailerCandidate {
+		return TrailerStatusCandidate
+	}
+
+	return TrailerStatusAbsent
 }
 
 // rawReaderAt returns the encoded source beneath an optional sealed decoder.
@@ -310,8 +358,16 @@ func (r *Reader) parse(ra io.ReaderAt, size int64, opts ReaderOptions) error {
 	if err != nil {
 		return err
 	}
+
 	r.trailerCandidate = trailerCandidate
 	r.sha1Trailer = digest
+	if _, sealed := ra.(*sealedReaderAt); !sealed {
+		status := TrailerStatusAbsent
+		if trailerCandidate {
+			status = TrailerStatusCandidate
+		}
+		r.trailerStatus.Store(uint32(status))
+	}
 
 	return nil
 }

@@ -193,6 +193,27 @@ func ExampleReader_EntriesWithOptionsIndexed() {
 	// payload
 }
 
+func ExampleReader_TrailerStatus() {
+	path, cleanup, err := exampleArchive()
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer cleanup()
+
+	r, err := pbo.Open(path)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer func() { _ = r.Close() }()
+
+	fmt.Println(r.TrailerStatus())
+
+	// Output:
+	// candidate
+}
+
 func ExampleReader_Extract() {
 	path, cleanup, err := exampleArchive()
 	if err != nil {

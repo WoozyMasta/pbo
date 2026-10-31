@@ -77,7 +77,8 @@ Pack options support matching generic and typed setters.
 
 [ComputeHashSet], [PackAndHash], and [PackAndHashFile]
 calculate signature hashes for supported versions and game types.
-[Reader.SHA1Trailer] reports a trailer only after verifying it.
+[Reader.TrailerStatus] reports plain-archive trailer state without hashing;
+[Reader.SHA1Trailer] verifies a detected candidate and returns its digest.
 
 # Resource limits
 

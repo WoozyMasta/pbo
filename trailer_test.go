@@ -8,8 +8,35 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 )
+
+// blockingTrailerReaderAt pauses the first trailer payload read for status polling tests.
+type blockingTrailerReaderAt struct {
+	// reader is the archive source being wrapped.
+	reader io.ReaderAt
+	// started signals that verification reached the archive payload.
+	started chan struct{}
+	// release allows the blocked read to continue.
+	release chan struct{}
+	// block enables the payload read pause after reader initialization.
+	block atomic.Bool
+	// once ensures the started notification is sent once.
+	once sync.Once
+}
+
+// ReadAt pauses the first payload read while trailer verification is active.
+func (r *blockingTrailerReaderAt) ReadAt(p []byte, off int64) (int, error) {
+	if off == 0 && r.block.Load() {
+		r.once.Do(func() { close(r.started) })
+		<-r.release
+	}
+
+	return r.reader.ReadAt(p, off)
+}
 
 // checkSHA1TrailerForTest verifies that the file ends with a valid SHA1 trailer and that
 // the stored hash matches the content.
@@ -104,6 +131,10 @@ func TestTrailerDetection_ZeroByteInNoTrailerPayload(t *testing.T) {
 		t.Fatalf("Open: %v", err)
 	}
 	defer func() { _ = r.Close() }()
+
+	if got := r.TrailerStatus(); got != TrailerStatusAbsent {
+		t.Fatalf("TrailerStatus()=%s, want absent", got)
+	}
 	if _, ok := r.SHA1Trailer(); ok {
 		t.Fatal("SHA1Trailer() reported a trailer for payload data")
 	}
@@ -148,8 +179,15 @@ func TestTrailerDetection_InvalidDigestHashesWholeFile(t *testing.T) {
 		t.Fatalf("Open: %v", err)
 	}
 	defer func() { _ = r.Close() }()
+
+	if got := r.TrailerStatus(); got != TrailerStatusCandidate {
+		t.Fatalf("TrailerStatus()=%s, want candidate", got)
+	}
 	if _, ok := r.SHA1Trailer(); ok {
 		t.Fatal("SHA1Trailer() accepted an invalid digest")
+	}
+	if got := r.TrailerStatus(); got != TrailerStatusInvalid {
+		t.Fatalf("TrailerStatus()=%s, want invalid", got)
 	}
 
 	hashSet, err := computeHashSetFromReader(r, SignVersionV2, GameTypeArma)
@@ -159,6 +197,88 @@ func TestTrailerDetection_InvalidDigestHashesWholeFile(t *testing.T) {
 	want := sha1.Sum(data) //nolint:gosec // Test mirrors PBO trailer hashing.
 	if !bytes.Equal(hashSet.Hash1[:], want[:]) {
 		t.Fatalf("hash1 = %x, want full-file hash %x", hashSet.Hash1, want)
+	}
+}
+
+func TestTrailerStatus_IsPollableDuringVerification(t *testing.T) {
+	t.Parallel()
+
+	path := createMinimalPBO(t)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	blocking := &blockingTrailerReaderAt{
+		reader:  bytes.NewReader(data),
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	r, err := NewReaderFromReaderAt(blocking, int64(len(data)))
+	if err != nil {
+		t.Fatalf("NewReaderFromReaderAt: %v", err)
+	}
+	defer func() { _ = r.Close() }()
+
+	blocking.block.Store(true)
+	verifyDone := make(chan struct{})
+	go func() {
+		_, _ = r.SHA1Trailer()
+		close(verifyDone)
+	}()
+	defer func() {
+		select {
+		case <-blocking.release:
+		default:
+			close(blocking.release)
+		}
+	}()
+
+	select {
+	case <-blocking.started:
+	case <-time.After(time.Second):
+		t.Fatal("trailer verification did not reach payload read")
+	}
+
+	statusResult := make(chan TrailerStatus, 1)
+	go func() { statusResult <- r.TrailerStatus() }()
+	select {
+	case status := <-statusResult:
+		if status != TrailerStatusVerifying {
+			t.Fatalf("TrailerStatus()=%s, want verifying", status)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("TrailerStatus() blocked during verification")
+	}
+
+	close(blocking.release)
+	select {
+	case <-verifyDone:
+	case <-time.After(time.Second):
+		t.Fatal("trailer verification did not finish")
+	}
+	if got := r.TrailerStatus(); got != TrailerStatusVerified {
+		t.Fatalf("TrailerStatus()=%s, want verified", got)
+	}
+}
+
+func TestTrailerStatus_ClosedReaderVerificationFails(t *testing.T) {
+	t.Parallel()
+
+	r, err := Open(createMinimalPBO(t))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if got := r.TrailerStatus(); got != TrailerStatusCandidate {
+		t.Fatalf("TrailerStatus()=%s, want candidate", got)
+	}
+	if err := r.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if _, ok := r.SHA1Trailer(); ok {
+		t.Fatal("SHA1Trailer() verified a closed reader")
+	}
+	if got := r.TrailerStatus(); got != TrailerStatusFailed {
+		t.Fatalf("TrailerStatus()=%s, want failed", got)
 	}
 }
 
@@ -180,11 +300,21 @@ func TestOpen_TrailerDetectionDoesNotHashPayload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadFile: %v", err)
 	}
+
 	counted := &byteCountingReaderAt{reader: bytes.NewReader(data)}
 	r, err := NewReaderFromReaderAt(counted, int64(len(data)))
 	if err != nil {
 		t.Fatalf("NewReaderFromReaderAt: %v", err)
 	}
+
+	bytesReadAfterOpen := counted.bytesRead
+	if got := r.TrailerStatus(); got != TrailerStatusCandidate {
+		t.Fatalf("TrailerStatus()=%s, want candidate", got)
+	}
+	if counted.bytesRead != bytesReadAfterOpen {
+		t.Fatal("TrailerStatus() read archive data")
+	}
+
 	_ = r.Close()
 	t.Logf("reader consumed %d of %d archive bytes during Open", counted.bytesRead, len(data))
 	if counted.bytesRead >= int64(len(data))/2 {

@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning][].
 
 * Added `Reader.EntriesWithOptionsIndexed` to build reusable derived views
   with source entry indices and parent paths.
+* Added `Reader.TrailerStatus` for non-blocking trailer state inspection
+  without hashing the archive.
 
 ### Changed
 
