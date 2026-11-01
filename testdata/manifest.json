@@ -1,0 +1,159 @@
+{
+  "schema_version": 1,
+  "source_manifest": {
+    "path": "source-manifest.json",
+    "sha256": "2837d3bdaafa381c5dfd19a500bf24d8781498007de32be51119e7d3b3b7f8c9",
+    "tree_sha256": "1545248a74eab7c9740a8a869a612cef150747af3bd05a3943472b54e159498d"
+  },
+  "public_keys": [
+    {
+      "name": "canonical-dayz",
+      "path": "keys/canonical-dayz.bikey",
+      "bytes": 167,
+      "sha256": "d1c4b59688a3713d4e38ef3dddbea378592879dc609bdda660ccedff9c3b2296"
+    },
+    {
+      "name": "canonical-arma",
+      "path": "keys/canonical-arma.bikey",
+      "bytes": 167,
+      "sha256": "099c80623a521f1c500cf9c7b00202efb5984a04650c58dd86012b82e97e9938"
+    }
+  ],
+  "pbo_outputs": [
+    {
+      "id": "dayz-filebank",
+      "path": "dayz/filebank/source.pbo",
+      "bytes": 14544,
+      "sha256": "1aff93f78501eaeb0f4589a6eeb876e8bcf31579d2e0afc7d4be0cdc71dc89c3",
+      "entry_count": 45,
+      "payload_start": 1919,
+      "payload_bytes": 12604,
+      "payload_end": 14523,
+      "trailer_marker": 0,
+      "trailer_sha1": "f4ff852ee3663edff23fd8865bff61bc25aedefd",
+      "independent_sha1": "f4ff852ee3663edff23fd8865bff61bc25aedefd",
+      "properties": {
+        "prefix": "canonical\\dayz\\filebank",
+        "author": "canonical",
+        "version": "1"
+      }
+    },
+    {
+      "id": "arma-filebank",
+      "path": "arma/filebank/source.pbo",
+      "bytes": 14544,
+      "sha256": "11e2b601b15a2d13754b2257f1638f94eadfacdf30559e5eecbc5ba969c50248",
+      "entry_count": 45,
+      "payload_start": 1919,
+      "payload_bytes": 12604,
+      "payload_end": 14523,
+      "trailer_marker": 0,
+      "trailer_sha1": "d85124f0168cf1775da606c6983e41947d07f4d0",
+      "independent_sha1": "d85124f0168cf1775da606c6983e41947d07f4d0",
+      "properties": {
+        "prefix": "canonical\\arma\\filebank",
+        "author": "canonical",
+        "version": "1"
+      }
+    },
+    {
+      "id": "dayz-addonbuilder",
+      "path": "dayz/addonbuilder/source.pbo",
+      "bytes": 14535,
+      "sha256": "5ea5d22fdd4a51999275a87e771932de8e9ade899a12f8ea8b283f590d595718",
+      "entry_count": 45,
+      "payload_start": 1910,
+      "payload_bytes": 12604,
+      "payload_end": 14514,
+      "trailer_marker": 0,
+      "trailer_sha1": "1f5b8564a8278c825f48dc31648b70ebb5b3447b",
+      "independent_sha1": "1f5b8564a8278c825f48dc31648b70ebb5b3447b",
+      "properties": {
+        "product": "dayz ugc",
+        "prefix": "golden\\dayz\\addonbuilder"
+      }
+    },
+    {
+      "id": "arma-addonbuilder",
+      "path": "arma/addonbuilder/source.pbo",
+      "bytes": 14661,
+      "sha256": "c90250fffc267ee68d9f3b493e69ee31ad65f01f22495cc8274f2cc95ff41b90",
+      "entry_count": 46,
+      "payload_start": 1938,
+      "payload_bytes": 12702,
+      "payload_end": 14640,
+      "trailer_marker": 0,
+      "trailer_sha1": "0cfc7d4d81680a7823731705213797ed3ab0a66c",
+      "independent_sha1": "0cfc7d4d81680a7823731705213797ed3ab0a66c",
+      "properties": {
+        "prefix": "golden\\arma\\addonbuilder"
+      }
+    }
+  ],
+  "signatures": [
+    {
+      "id": "dayz-v2",
+      "path": "signatures/dayz-v2/source.pbo.canonical-dayz.bisign",
+      "bytes": 567,
+      "sha256": "992564a8e0ff75f31f8c2d2bf37ddd32e13bf2bfba9645d1aa73cfc6b9a31b04",
+      "input_pbo": "signatures/dayz-v2/source.pbo",
+      "input_pbo_sha256": "1aff93f78501eaeb0f4589a6eeb876e8bcf31579d2e0afc7d4be0cdc71dc89c3",
+      "game_type": "dayz",
+      "version": 2,
+      "key_path": "keys/canonical-dayz.bikey",
+      "hashes": {
+        "hash1": "f4ff852ee3663edff23fd8865bff61bc25aedefd",
+        "hash2": "23bae095812c1fc9c564b0f69def804dad144745",
+        "hash3": "7e8b9e4a8d1f01979371d572ffd503e24497a46c"
+      }
+    },
+    {
+      "id": "dayz-v3",
+      "path": "signatures/dayz-v3/source.pbo.canonical-dayz.bisign",
+      "bytes": 567,
+      "sha256": "144a0142ba418678afdd0391ba3d6ae191cb8fe3b5d6bcf8f11c0f9d09ed457a",
+      "input_pbo": "signatures/dayz-v3/source.pbo",
+      "input_pbo_sha256": "1aff93f78501eaeb0f4589a6eeb876e8bcf31579d2e0afc7d4be0cdc71dc89c3",
+      "game_type": "dayz",
+      "version": 3,
+      "key_path": "keys/canonical-dayz.bikey",
+      "hashes": {
+        "hash1": "f4ff852ee3663edff23fd8865bff61bc25aedefd",
+        "hash2": "23bae095812c1fc9c564b0f69def804dad144745",
+        "hash3": "a9779c4022c2a53cad9faf54aae8d819edfedff9"
+      }
+    },
+    {
+      "id": "arma-v2",
+      "path": "signatures/arma-v2/source.pbo.canonical-arma.bisign",
+      "bytes": 567,
+      "sha256": "86e1249f2801726fddedadb574b7d4c0b2befb4a3dac53289514b8db540a7630",
+      "input_pbo": "signatures/arma-v2/source.pbo",
+      "input_pbo_sha256": "1aff93f78501eaeb0f4589a6eeb876e8bcf31579d2e0afc7d4be0cdc71dc89c3",
+      "game_type": "arma",
+      "version": 2,
+      "key_path": "keys/canonical-arma.bikey",
+      "hashes": {
+        "hash1": "f4ff852ee3663edff23fd8865bff61bc25aedefd",
+        "hash2": "23bae095812c1fc9c564b0f69def804dad144745",
+        "hash3": "49c27b34274e07be2c74d7f236499889d69eb110"
+      }
+    },
+    {
+      "id": "arma-v3",
+      "path": "signatures/arma-v3/source.pbo.canonical-arma.bisign",
+      "bytes": 567,
+      "sha256": "d12936bace1200cb278614f66fc75fd0afb91c6f8c0a00fe5eabd67945369538",
+      "input_pbo": "signatures/arma-v3/source.pbo",
+      "input_pbo_sha256": "1aff93f78501eaeb0f4589a6eeb876e8bcf31579d2e0afc7d4be0cdc71dc89c3",
+      "game_type": "arma",
+      "version": 3,
+      "key_path": "keys/canonical-arma.bikey",
+      "hashes": {
+        "hash1": "f4ff852ee3663edff23fd8865bff61bc25aedefd",
+        "hash2": "23bae095812c1fc9c564b0f69def804dad144745",
+        "hash3": "8d6749057654f97d373a92656b78e0ab8bb895cf"
+      }
+    }
+  ]
+}

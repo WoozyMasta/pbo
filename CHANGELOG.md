@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning][].
 
 ### Added
 
+* Added original-tool PBO fixtures and signed V2/V3 hash vectors
+  for corpus integrity checks.
 * Added `Reader.EntriesWithOptionsIndexed` to build reusable derived views
   with source entry indices and parent paths.
 * Added `Reader.TrailerStatus` for non-blocking trailer state inspection

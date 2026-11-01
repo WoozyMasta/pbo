@@ -190,3 +190,5 @@ $RECYCLE.BIN/
 bench_*.txt
 *.pprof
 cmd/
+!testdata/**/*.jpg
+!testdata/**/*.png
