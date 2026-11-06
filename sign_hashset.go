@@ -39,8 +39,8 @@ func validateSignHashArgs(version SignVersion, gameType GameType) error {
 	}
 
 	gameType = normalizeGameType(gameType)
-	if version == SignVersionV3 && gameType != GameTypeArma && gameType != GameTypeDayZ {
-		return fmt.Errorf("%w: %q", ErrUnsupportedGameTypeV3, gameType)
+	if gameType != GameTypeArma && gameType != GameTypeDayZ {
+		return fmt.Errorf("%w: %q", ErrUnsupportedGameType, gameType)
 	}
 
 	return nil
@@ -277,6 +277,9 @@ func computeSignFileHashFromReaderAt(
 	if ra == nil {
 		return nil, ErrNilReader
 	}
+	if err := validateSignHashArgs(version, gameType); err != nil {
+		return nil, err
+	}
 
 	h := sha1.New() //nolint:gosec // Signature format requires SHA1.
 	var copyBufArr [signHashCopyBufferSize]byte
@@ -348,7 +351,16 @@ func shouldHashFileForSign(version SignVersion, gameType GameType, filename stri
 
 	switch version {
 	case SignVersionV2:
-		return !isV2SignExcludedExt(ext), nil
+		switch gameType {
+		case GameTypeArma:
+			return !isArmaV2SignExcludedExt(ext), nil
+
+		case GameTypeDayZ:
+			return !isDayZV2SignExcludedExt(ext), nil
+
+		default:
+			return false, fmt.Errorf("%w: %q", ErrUnsupportedGameType, gameType)
+		}
 
 	case SignVersionV3:
 		switch gameType {
@@ -359,7 +371,7 @@ func shouldHashFileForSign(version SignVersion, gameType GameType, filename stri
 			return isArmaV3SignAllowedExt(ext), nil
 
 		default:
-			return false, fmt.Errorf("%w: %q", ErrUnsupportedGameTypeV3, gameType)
+			return false, fmt.Errorf("%w: %q", ErrUnsupportedGameType, gameType)
 		}
 
 	default:
@@ -378,11 +390,24 @@ func signFileExtLower(filename string) string {
 	return asciiLower(filename[dot+1:])
 }
 
-// isV2SignExcludedExt reports whether extension is excluded from v2 filehash.
-func isV2SignExcludedExt(ext string) bool {
+// isArmaV2SignExcludedExt reports whether Arma V2 excludes an extension.
+func isArmaV2SignExcludedExt(ext string) bool {
 	switch ext {
 	case "paa", "jpg", "p3d", "tga", "rvmat", "lip", "ogg", "wss", "png", "rtm", "pac", "fxy", "wrp":
 		return true
+
+	default:
+		return false
+	}
+}
+
+// isDayZV2SignExcludedExt reports whether DayZ V2 excludes an extension.
+func isDayZV2SignExcludedExt(ext string) bool {
+	switch ext {
+	case "paa", "jpg", "p3d", "tga", "rvmat", "lip", "ogg", "wss", "png",
+		"rtm", "pac", "fxy", "wrp", "nm", "xob", "anm", "edds", "emat", "ptc":
+		return true
+
 	default:
 		return false
 	}
@@ -393,6 +418,7 @@ func isDayZV3SignAllowedExt(ext string) bool {
 	switch ext {
 	case "bikb", "c", "ext", "hpp", "cfg", "h", "inc":
 		return true
+
 	default:
 		return false
 	}
@@ -401,8 +427,9 @@ func isDayZV3SignAllowedExt(ext string) bool {
 // isArmaV3SignAllowedExt reports whether extension is included in Arma v3 filehash.
 func isArmaV3SignAllowedExt(ext string) bool {
 	switch ext {
-	case "sqf", "inc", "bikb", "ext", "fsm", "sqm", "hpp", "cfg", "sqs", "h", "cpp":
+	case "sqf", "inc", "bikb", "ext", "fsm", "sqm", "hpp", "cfg", "sqs", "h", "sqfc":
 		return true
+
 	default:
 		return false
 	}

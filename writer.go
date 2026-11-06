@@ -186,13 +186,13 @@ func PackAndHash(
 		return nil, hs, ErrNilWriter
 	}
 
+	if err := validateSignHashArgs(signVersion, gameType); err != nil {
+		return nil, hs, err
+	}
+
 	ra, ok := out.(io.ReaderAt)
 	if !ok {
 		return nil, hs, ErrReaderAtRequired
-	}
-
-	if err := validateSignHashArgs(signVersion, gameType); err != nil {
-		return nil, hs, err
 	}
 
 	opts.signHashVersion = signVersion

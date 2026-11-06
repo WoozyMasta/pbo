@@ -15,13 +15,11 @@ const (
 	SignVersionV3 SignVersion = 3
 )
 
-// GameType is game-specific hash policy discriminator for v3 signatures.
+// GameType selects the game-specific file hash policy for v2 and v3 signatures.
 type GameType string
 
-// Supported game types for v3 signature hash policy.
+// Supported game types for signature hash policies.
 const (
-	// GameTypeAny is the default game type for v3 signature hash policy.
-	GameTypeAny GameType = ""
 	// GameTypeArma is the game type for Arma 3.
 	GameTypeArma GameType = "arma"
 	// GameTypeDayZ is the game type for DayZ.

@@ -13,13 +13,6 @@ import (
 func TestPackAndHash_MatchesComputeHashSet(t *testing.T) {
 	t.Parallel()
 
-	outPath := filepath.Join(t.TempDir(), "out.pbo")
-	f, err := os.OpenFile(outPath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o600)
-	if err != nil {
-		t.Fatalf("create file: %v", err)
-	}
-	defer func() { _ = f.Close() }()
-
 	payload := bytes.Repeat([]byte("class X {\n};\n"), 1024)
 	inputs := []Input{
 		{
@@ -31,33 +24,45 @@ func TestPackAndHash_MatchesComputeHashSet(t *testing.T) {
 		},
 	}
 
-	_, hsPack, err := PackAndHash(context.Background(), f, inputs, PackOptions{
-		Compress:        true,
-		CompressRules:   includeRules("*.c"),
-		MinCompressSize: 1,
-	}, SignVersionV3, GameTypeDayZ)
-	if err != nil {
-		t.Fatalf("PackAndHash: %v", err)
-	}
+	for _, gameType := range []GameType{GameTypeDayZ, GameTypeArma} {
+		t.Run(string(gameType), func(t *testing.T) {
+			t.Parallel()
 
-	if err := f.Sync(); err != nil {
-		t.Fatalf("sync: %v", err)
-	}
+			outPath := filepath.Join(t.TempDir(), "out.pbo")
+			f, err := os.OpenFile(outPath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o600)
+			if err != nil {
+				t.Fatalf("create file: %v", err)
+			}
+			defer func() { _ = f.Close() }()
 
-	hsFile, err := ComputeHashSet(outPath, SignVersionV3, GameTypeDayZ)
-	if err != nil {
-		t.Fatalf("ComputeHashSet: %v", err)
-	}
+			_, hsPack, err := PackAndHash(context.Background(), f, inputs, PackOptions{
+				Compress:        true,
+				CompressRules:   includeRules("*.c"),
+				MinCompressSize: 1,
+			}, SignVersionV3, gameType)
+			if err != nil {
+				t.Fatalf("PackAndHash: %v", err)
+			}
 
-	if hsPack != hsFile {
-		t.Fatalf("hash mismatch:\nPackAndHash=%x\nComputeHashSet=%x", hsPack, hsFile)
+			if err := f.Sync(); err != nil {
+				t.Fatalf("sync: %v", err)
+			}
+
+			hsFile, err := ComputeHashSet(outPath, SignVersionV3, gameType)
+			if err != nil {
+				t.Fatalf("ComputeHashSet: %v", err)
+			}
+
+			if hsPack != hsFile {
+				t.Fatalf("hash mismatch:\nPackAndHash=%x\nComputeHashSet=%x", hsPack, hsFile)
+			}
+		})
 	}
 }
 
 func TestPackAndHashFile_MatchesComputeHashSet(t *testing.T) {
 	t.Parallel()
 
-	outPath := filepath.Join(t.TempDir(), "out.pbo")
 	payload := bytes.Repeat([]byte("x"), 64*1024)
 	inputs := []Input{
 		{
@@ -69,24 +74,64 @@ func TestPackAndHashFile_MatchesComputeHashSet(t *testing.T) {
 		},
 	}
 
-	_, hsPack, err := PackAndHashFile(context.Background(), outPath, inputs, PackOptions{
-		Compress:      true,
-		CompressRules: includeRules("*.txt"),
-	}, SignVersionV2, GameTypeAny)
-	if err != nil {
-		t.Fatalf("PackAndHashFile: %v", err)
-	}
+	for _, gameType := range []GameType{GameTypeDayZ, GameTypeArma} {
+		t.Run(string(gameType), func(t *testing.T) {
+			t.Parallel()
 
-	hsFile, err := ComputeHashSet(outPath, SignVersionV2, GameTypeAny)
-	if err != nil {
-		t.Fatalf("ComputeHashSet: %v", err)
-	}
+			outPath := filepath.Join(t.TempDir(), "out.pbo")
+			_, hsPack, err := PackAndHashFile(context.Background(), outPath, inputs, PackOptions{
+				Compress:      true,
+				CompressRules: includeRules("*.txt"),
+			}, SignVersionV2, gameType)
+			if err != nil {
+				t.Fatalf("PackAndHashFile: %v", err)
+			}
 
-	if hsPack != hsFile {
-		t.Fatalf("hash mismatch:\nPackAndHashFile=%x\nComputeHashSet=%x", hsPack, hsFile)
+			hsFile, err := ComputeHashSet(outPath, SignVersionV2, gameType)
+			if err != nil {
+				t.Fatalf("ComputeHashSet: %v", err)
+			}
+
+			if hsPack != hsFile {
+				t.Fatalf("hash mismatch:\nPackAndHashFile=%x\nComputeHashSet=%x", hsPack, hsFile)
+			}
+		})
 	}
 }
 
+// TestPackAndHashRequiresExplicitGameType checks both streaming pack-and-hash APIs.
+func TestPackAndHashRequiresExplicitGameType(t *testing.T) {
+	t.Parallel()
+
+	inputs := []Input{{
+		Path: "a.txt",
+		Open: func() (io.ReadCloser, error) {
+			return io.NopCloser(bytes.NewReader([]byte("abc"))), nil
+		},
+		SizeHint: 3,
+	}}
+
+	_, _, err := PackAndHash(
+		context.Background(), &memWriteSeeker{}, inputs, PackOptions{}, SignVersionV2, "",
+	)
+	if !errors.Is(err, ErrUnsupportedGameType) {
+		t.Fatalf("PackAndHash() error=%v, want ErrUnsupportedGameType", err)
+	}
+
+	_, _, err = PackAndHashFile(
+		context.Background(),
+		filepath.Join(t.TempDir(), "missing-game.pbo"),
+		inputs,
+		PackOptions{},
+		SignVersionV2,
+		"",
+	)
+	if !errors.Is(err, ErrUnsupportedGameType) {
+		t.Fatalf("PackAndHashFile() error=%v, want ErrUnsupportedGameType", err)
+	}
+}
+
+// TestPackAndHash_RequiresReaderAt rejects outputs that cannot be hashed in place.
 func TestPackAndHash_RequiresReaderAt(t *testing.T) {
 	t.Parallel()
 

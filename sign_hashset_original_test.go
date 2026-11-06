@@ -183,6 +183,35 @@ func TestCanonicalCorpusIntegrity(t *testing.T) {
 	}
 }
 
+// TestComputeHashSetMatchesOriginalSignatureVectors checks all canonical signer digests.
+func TestComputeHashSetMatchesOriginalSignatureVectors(t *testing.T) {
+	manifestData := readCorpusFile(t, filepath.Join(canonicalCorpusDir, "manifest.json"))
+	var manifest canonicalCorpusManifest
+	if err := json.Unmarshal(manifestData, &manifest); err != nil {
+		t.Fatalf("decode corpus manifest: %v", err)
+	}
+
+	for _, signature := range manifest.Signatures {
+		t.Run(signature.ID, func(t *testing.T) {
+			t.Parallel()
+
+			pboPath := filepath.Join(canonicalCorpusDir, filepath.FromSlash(signature.InputPBO))
+			hashes, err := ComputeHashSet(
+				pboPath,
+				SignVersion(signature.Version),
+				GameType(signature.GameType),
+			)
+			if err != nil {
+				t.Fatalf("ComputeHashSet(%s): %v", signature.ID, err)
+			}
+
+			assertDigest(t, hashes.Hash1, signature.Hashes.Hash1, signature.ID+" hash1")
+			assertDigest(t, hashes.Hash2, signature.Hashes.Hash2, signature.ID+" hash2")
+			assertDigest(t, hashes.Hash3, signature.Hashes.Hash3, signature.ID+" hash3")
+		})
+	}
+}
+
 // readCorpusFile reads one fixture and fails the test with its path on error.
 func readCorpusFile(t *testing.T, path string) []byte {
 	t.Helper()

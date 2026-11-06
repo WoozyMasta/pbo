@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha1" //nolint:gosec // Test mirrors format SHA1 hashing pipeline.
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -190,39 +192,204 @@ func TestComputeSignNameHash_UsesASCIILowercase(t *testing.T) {
 	}
 }
 
-func TestShouldHashFileForSign_DayZV3Policy(t *testing.T) {
+// TestShouldHashFileForSign_Policies covers the complete game/version extension policy.
+func TestShouldHashFileForSign_Policies(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
+	policies := []struct {
 		name     string
-		filename string
-		want     bool
+		version  SignVersion
+		gameType GameType
+		included []string
+		excluded []string
 	}{
-		{name: "c", filename: "scripts/mission.c", want: true},
-		{name: "cfg", filename: "config.cfg", want: true},
-		{name: "cpp", filename: "config.cpp", want: false},
-		{name: "rtm", filename: "anim.rtm", want: false},
-		{name: "hpp", filename: "defs.hpp", want: true},
-		{name: "h", filename: "defs.h", want: true},
-		{name: "inc", filename: "defs.inc", want: true},
-		{name: "ext", filename: "mission.ext", want: true},
-		{name: "bikb", filename: "briefing.bikb", want: true},
+		{
+			name:     "arma-v2",
+			version:  SignVersionV2,
+			gameType: GameTypeArma,
+			included: []string{"cpp", "nm", "xob", "anm", "edds", "emat", "ptc", "sqfc", "c", "sqf"},
+			excluded: []string{"paa", "jpg", "p3d", "tga", "rvmat", "lip", "ogg", "wss", "png", "rtm", "pac", "fxy", "wrp"},
+		},
+		{
+			name:     "dayz-v2",
+			version:  SignVersionV2,
+			gameType: GameTypeDayZ,
+			included: []string{"cpp", "sqfc", "c", "sqf"},
+			excluded: []string{
+				"paa", "jpg", "p3d", "tga", "rvmat", "lip", "ogg", "wss", "png",
+				"rtm", "pac", "fxy", "wrp", "nm", "xob", "anm", "edds", "emat", "ptc",
+			},
+		},
+		{
+			name:     "arma-v3",
+			version:  SignVersionV3,
+			gameType: GameTypeArma,
+			included: []string{"sqf", "inc", "bikb", "ext", "fsm", "sqm", "hpp", "cfg", "sqs", "h", "sqfc"},
+			excluded: []string{"cpp", "c", "nm", "paa", "unknown"},
+		},
+		{
+			name:     "dayz-v3",
+			version:  SignVersionV3,
+			gameType: GameTypeDayZ,
+			included: []string{"inc", "bikb", "ext", "hpp", "cfg", "h", "c"},
+			excluded: []string{"cpp", "sqf", "fsm", "sqm", "sqs", "sqfc", "nm", "paa", "unknown"},
+		},
 	}
 
-	for _, tt := range tests {
-		tt := tt
-		t.Run(tt.name, func(t *testing.T) {
+	for _, policy := range policies {
+		t.Run(policy.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := shouldHashFileForSign(SignVersionV3, GameTypeDayZ, tt.filename)
-			if err != nil {
-				t.Fatalf("shouldHashFileForSign(dayz, %q): %v", tt.filename, err)
+			for _, ext := range policy.included {
+				filename := "scripts/asset." + ext
+				got, err := shouldHashFileForSign(policy.version, policy.gameType, filename)
+				if err != nil {
+					t.Fatalf("shouldHashFileForSign(%s, %q): %v", policy.name, filename, err)
+				}
+				if !got {
+					t.Errorf("shouldHashFileForSign(%s, %q)=false, want true", policy.name, filename)
+				}
 			}
 
-			if got != tt.want {
-				t.Fatalf("shouldHashFileForSign(dayz, %q)=%t, want %t", tt.filename, got, tt.want)
+			for _, ext := range policy.excluded {
+				filename := "scripts/asset." + ext
+				got, err := shouldHashFileForSign(policy.version, policy.gameType, filename)
+				if err != nil {
+					t.Fatalf("shouldHashFileForSign(%s, %q): %v", policy.name, filename, err)
+				}
+				if got {
+					t.Errorf("shouldHashFileForSign(%s, %q)=true, want false", policy.name, filename)
+				}
+			}
+
+			for _, filename := range []string{"no-extension", "asset.", "asset.sqfcx", "scripts\\asset.C"} {
+				want := policy.version == SignVersionV2
+				if filename == "scripts\\asset.C" && policy.version == SignVersionV3 {
+					want = policy.gameType == GameTypeDayZ
+				}
+				got, err := shouldHashFileForSign(policy.version, policy.gameType, filename)
+				if err != nil {
+					t.Fatalf("shouldHashFileForSign(%s, %q): %v", policy.name, filename, err)
+				}
+				if got != want {
+					t.Errorf("shouldHashFileForSign(%s, %q)=%t, want %t", policy.name, filename, got, want)
+				}
 			}
 		})
+	}
+}
+
+// TestValidateSignHashArgsRequiresGameType rejects missing and unknown game policies.
+func TestValidateSignHashArgsRequiresGameType(t *testing.T) {
+	t.Parallel()
+
+	for _, version := range []SignVersion{SignVersionV2, SignVersionV3} {
+		t.Run(fmt.Sprintf("v%d", version), func(t *testing.T) {
+			t.Parallel()
+
+			for _, gameType := range []GameType{"", "unknown"} {
+				if err := validateSignHashArgs(version, gameType); !errors.Is(err, ErrUnsupportedGameType) {
+					t.Errorf("validateSignHashArgs(%d, %q) error=%v, want ErrUnsupportedGameType", version, gameType, err)
+				}
+			}
+
+			if err := validateSignHashArgs(version, GameType("DAYZ")); err != nil {
+				t.Errorf("validateSignHashArgs(%d, DAYZ): %v", version, err)
+			}
+		})
+	}
+
+	if err := validateSignHashArgs(SignVersion(1), GameTypeDayZ); !errors.Is(err, ErrUnsupportedSignVersion) {
+		t.Fatalf("validateSignHashArgs(1, dayz) error=%v, want ErrUnsupportedSignVersion", err)
+	}
+}
+
+// TestComputeSignFileHashFromReaderAtRequiresGameTypeForEmptyEntries validates empty input too.
+func TestComputeSignFileHashFromReaderAtRequiresGameTypeForEmptyEntries(t *testing.T) {
+	t.Parallel()
+
+	_, err := computeSignFileHashFromReaderAt(bytes.NewReader(nil), nil, SignVersionV2, "")
+	if !errors.Is(err, ErrUnsupportedGameType) {
+		t.Fatalf("error=%v, want ErrUnsupportedGameType", err)
+	}
+}
+
+// TestComputeSignFileHashEmptySentinels preserves version-specific empty filehash values.
+func TestComputeSignFileHashEmptySentinels(t *testing.T) {
+	t.Parallel()
+
+	for _, version := range []SignVersion{SignVersionV2, SignVersionV3} {
+		t.Run(fmt.Sprintf("v%d", version), func(t *testing.T) {
+			t.Parallel()
+
+			payload := "nothing"
+			if version == SignVersionV3 {
+				payload = "gnihton"
+			}
+			want := sha1.Sum([]byte(payload))
+
+			for _, entries := range [][]EntryInfo{nil, {{Path: "empty.c", DataSize: 0}}} {
+				for _, gameType := range []GameType{GameTypeArma, GameTypeDayZ} {
+					got, err := computeSignFileHashFromReaderAt(
+						bytes.NewReader(nil),
+						entries,
+						version,
+						gameType,
+					)
+					if err != nil {
+						t.Fatalf("computeSignFileHashFromReaderAt(%d, %s): %v", version, gameType, err)
+					}
+					if !bytes.Equal(got, want[:]) {
+						t.Errorf("empty filehash for %d/%s=%x, want %x", version, gameType, got, want)
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestComputeHashSet_GameTypeOnlyChangesV2Hash3 keeps hash1/hash2 game-independent.
+func TestComputeHashSet_GameTypeOnlyChangesV2Hash3(t *testing.T) {
+	t.Parallel()
+
+	outPath := filepath.Join(t.TempDir(), "game-policy.pbo")
+	inputs := []Input{
+		{
+			Path: "asset.nm",
+			Open: func() (io.ReadCloser, error) {
+				return io.NopCloser(bytes.NewReader([]byte("nm-payload"))), nil
+			},
+			SizeHint: int64(len("nm-payload")),
+		},
+	}
+	if _, err := PackFile(context.Background(), outPath, inputs, PackOptions{}); err != nil {
+		t.Fatalf("PackFile(%s): %v", outPath, err)
+	}
+
+	armaHashes, err := ComputeHashSet(outPath, SignVersionV2, GameTypeArma)
+	if err != nil {
+		t.Fatalf("ComputeHashSet(Arma V2): %v", err)
+	}
+	dayZHashes, err := ComputeHashSet(outPath, SignVersionV2, GameTypeDayZ)
+	if err != nil {
+		t.Fatalf("ComputeHashSet(DayZ V2): %v", err)
+	}
+
+	if armaHashes.Hash1 != dayZHashes.Hash1 || armaHashes.Hash2 != dayZHashes.Hash2 {
+		t.Fatal("hash1 and hash2 changed with game type")
+	}
+	if armaHashes.Hash3 == dayZHashes.Hash3 {
+		t.Fatal("hash3 did not change with V2 game-specific file selection")
+	}
+}
+
+// TestComputeHashSetRequiresExplicitGameType rejects a missing game before opening the PBO.
+func TestComputeHashSetRequiresExplicitGameType(t *testing.T) {
+	t.Parallel()
+
+	_, err := ComputeHashSet(filepath.Join(t.TempDir(), "missing.pbo"), SignVersionV2, "")
+	if !errors.Is(err, ErrUnsupportedGameType) {
+		t.Fatalf("ComputeHashSet() error=%v, want ErrUnsupportedGameType", err)
 	}
 }
 

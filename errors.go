@@ -40,8 +40,8 @@ var (
 	ErrInvalidCompressPattern = errors.New("invalid compress rules")
 	// ErrUnsupportedSignVersion means the signature version is not supported.
 	ErrUnsupportedSignVersion = errors.New("unsupported signature version")
-	// ErrUnsupportedGameTypeV3 means the game type is not supported for v3.
-	ErrUnsupportedGameTypeV3 = errors.New("unsupported game type for v3")
+	// ErrUnsupportedGameType means a signature hash policy requires Arma or DayZ.
+	ErrUnsupportedGameType = errors.New("unsupported game type")
 	// ErrTrailerTooShort means the file is too short for the trailer.
 	ErrTrailerTooShort = errors.New("file too short for trailer")
 	// ErrInvalidTrailerPrefix means the trailer does not start with 0x00.
