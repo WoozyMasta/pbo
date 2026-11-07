@@ -33,6 +33,8 @@ and this project adheres to [Semantic Versioning][].
   including `CONIN$`, `CONOUT$`, and the superscript-digit `COM`/`LPT` names.
 * `Editor.Commit` builds and syncs the rewritten archive
   in a temporary file before replacing the source archive.
+* `ComputeHashSet` validates the SHA-1 trailer at the resolved payload end
+  and rejects missing, malformed, or mismatched trailer data.
 
 ## [0.4.0][] - 2026-10-19
 

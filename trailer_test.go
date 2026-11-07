@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha1" //nolint:gosec // Trailer format requires SHA1.
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -139,17 +140,14 @@ func TestTrailerDetection_ZeroByteInNoTrailerPayload(t *testing.T) {
 		t.Fatal("SHA1Trailer() reported a trailer for payload data")
 	}
 
-	hashSet, err := computeHashSetFromReader(r, SignVersionV2, GameTypeArma)
-	if err != nil {
-		t.Fatalf("computeHashSetFromReader: %v", err)
-	}
-	want := sha1.Sum(body) //nolint:gosec // Test mirrors PBO trailer hashing.
-	if !bytes.Equal(hashSet.Hash1[:], want[:]) {
-		t.Fatalf("hash1 = %x, want full-file hash %x", hashSet.Hash1, want)
+	if _, err := computeHashSetFromReader(
+		r, SignVersionV2, GameTypeArma,
+	); !errors.Is(err, ErrTrailerTooShort) {
+		t.Fatalf("computeHashSetFromReader() error=%v, want ErrTrailerTooShort", err)
 	}
 }
 
-func TestTrailerDetection_InvalidDigestHashesWholeFile(t *testing.T) {
+func TestTrailerDetection_InvalidDigestRejectsSigning(t *testing.T) {
 	t.Parallel()
 
 	path := createMinimalPBO(t)
@@ -170,10 +168,6 @@ func TestTrailerDetection_InvalidDigestHashesWholeFile(t *testing.T) {
 		t.Fatalf("close: %v", err)
 	}
 
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("ReadFile: %v", err)
-	}
 	r, err := Open(path)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
@@ -190,13 +184,101 @@ func TestTrailerDetection_InvalidDigestHashesWholeFile(t *testing.T) {
 		t.Fatalf("TrailerStatus()=%s, want invalid", got)
 	}
 
-	hashSet, err := computeHashSetFromReader(r, SignVersionV2, GameTypeArma)
-	if err != nil {
-		t.Fatalf("computeHashSetFromReader: %v", err)
+	if _, err := computeHashSetFromReader(r, SignVersionV2, GameTypeArma); !errors.Is(err, ErrTrailerHashMismatch) {
+		t.Fatalf("computeHashSetFromReader() error=%v, want ErrTrailerHashMismatch", err)
 	}
-	want := sha1.Sum(data) //nolint:gosec // Test mirrors PBO trailer hashing.
-	if !bytes.Equal(hashSet.Hash1[:], want[:]) {
-		t.Fatalf("hash1 = %x, want full-file hash %x", hashSet.Hash1, want)
+}
+
+// TestComputeSignHash1ForSigningValidatesTrailerBoundary checks strict signing trailer rules.
+func TestComputeSignHash1ForSigningValidatesTrailerBoundary(t *testing.T) {
+	t.Parallel()
+
+	body := []byte("packed PBO bytes")
+	digest := sha1.Sum(body) //nolint:gosec // Test mirrors PBO trailer hashing.
+	valid := append(append([]byte(nil), body...), 0)
+	valid = append(valid, digest[:]...)
+	emptyDigest := sha1.Sum(nil) //nolint:gosec // Test mirrors PBO trailer hashing.
+	emptyTrailer := append([]byte{0}, emptyDigest[:]...)
+	wrongMarker := append([]byte(nil), valid...)
+	wrongMarker[len(body)] = 1
+	wrongDigest := append([]byte(nil), valid...)
+	wrongDigest[len(wrongDigest)-1] ^= 0xff
+
+	tests := []struct {
+		name       string
+		data       []byte
+		payloadEnd int64
+		wantErr    error
+	}{
+		{
+			name:       "valid",
+			data:       valid,
+			payloadEnd: int64(len(body))},
+		{
+			name:       "empty payload",
+			data:       emptyTrailer,
+			payloadEnd: 0},
+		{
+			name:       "missing trailer",
+			data:       body,
+			payloadEnd: int64(len(body)),
+			wantErr:    ErrTrailerTooShort},
+		{
+			name:       "truncated trailer",
+			data:       valid[:len(valid)-1],
+			payloadEnd: int64(len(body)),
+			wantErr:    ErrTrailerTooShort},
+		{
+			name:       "wrong marker",
+			data:       wrongMarker,
+			payloadEnd: int64(len(body)),
+			wantErr:    ErrInvalidTrailerPrefix,
+		},
+		{
+			name:       "wrong digest",
+			data:       wrongDigest,
+			payloadEnd: int64(len(body)),
+			wantErr:    ErrTrailerHashMismatch,
+		},
+		{
+			name:       "extra data",
+			data:       append(append([]byte(nil), valid...), 0xff),
+			payloadEnd: int64(len(body)),
+			wantErr:    ErrUnexpectedTrailerData,
+		},
+		{
+			name:       "payload end out of bounds",
+			data:       valid,
+			payloadEnd: int64(len(valid) + 1),
+			wantErr:    ErrInvalidEntryOffset,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := computeSignHash1ForSigning(
+				bytes.NewReader(test.data), int64(len(test.data)), test.payloadEnd,
+			)
+			if test.wantErr != nil {
+				if !errors.Is(err, test.wantErr) {
+					t.Fatalf("error=%v, want %v", err, test.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("computeSignHash1ForSigning: %v", err)
+			}
+
+			want := digest[:]
+			if test.name == "empty payload" {
+				want = emptyDigest[:]
+			}
+			if !bytes.Equal(got, want) {
+				t.Fatalf("hash1=%x, want %x", got, want)
+			}
+		})
 	}
 }
 

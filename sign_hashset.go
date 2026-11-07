@@ -52,31 +52,46 @@ func computeHashSetFromReader(r *Reader, version SignVersion, gameType GameType)
 		return HashSet{}, ErrNilReader
 	}
 
-	return computeHashSetFromPackedParts(r.rawReaderAt(), r.ra, r.size, r.trailerCandidate, r.Headers(), r.entries, version, gameType)
+	hashRA := r.rawReaderAt()
+	var hash1 []byte
+	if _, sealed := r.ra.(*sealedReaderAt); sealed {
+		// Sealed signing keeps its existing raw-byte behavior
+		// until its format contract is researched separately.
+		var err error
+		hash1, err = computeSignHash1(hashRA, r.size, r.trailerCandidate)
+		if err != nil {
+			return HashSet{}, fmt.Errorf("hash1: %w", err)
+		}
+	} else {
+		payloadEnd := expectedPayloadEnd(r.entries, r.dataStart)
+		var err error
+		hash1, err = computeSignHash1ForSigning(hashRA, r.size, payloadEnd)
+		if err != nil {
+			return HashSet{}, fmt.Errorf("hash1: %w", err)
+		}
+	}
+
+	return computeHashSetFromPackedParts(hash1, r.ra, r.Headers(), r.entries, version, gameType)
 }
 
 // computeHashSetFromPackedParts calculates hash set from archive and decoded payload readers.
 func computeHashSetFromPackedParts(
-	hashRA io.ReaderAt,
+	hash1 []byte,
 	payloadRA io.ReaderAt,
-	size int64,
-	hasTrailer bool,
 	headers []HeaderPair,
 	entries []EntryInfo,
 	version SignVersion,
 	gameType GameType,
 ) (HashSet, error) {
 	var hs HashSet
-	if hashRA == nil || payloadRA == nil {
+	if payloadRA == nil {
 		return hs, ErrNilReader
+	}
+	if len(hash1) != sha1.Size {
+		return hs, fmt.Errorf("%w: got %d, want %d", ErrInvalidSHA1DigestLength, len(hash1), sha1.Size)
 	}
 
 	prefix := pboPrefixFromHeaders(headers)
-
-	hash1, err := computeSignHash1(hashRA, size, hasTrailer)
-	if err != nil {
-		return hs, fmt.Errorf("hash1: %w", err)
-	}
 
 	nameHash := computeSignNameHash(entries)
 	fileHash, err := computeSignFileHashFromReaderAt(payloadRA, entries, version, gameType)
@@ -92,6 +107,42 @@ func computeHashSetFromPackedParts(
 	copy(hs.Hash3[:], hash3)
 
 	return hs, nil
+}
+
+// computeSignHash1ForSigning validates and hashes a plain PBO through its payload end.
+func computeSignHash1ForSigning(ra io.ReaderAt, size, payloadEnd int64) ([]byte, error) {
+	if ra == nil {
+		return nil, ErrNilReader
+	}
+	if payloadEnd < 0 || payloadEnd > size {
+		return nil, fmt.Errorf("%w: payload end %d for file size %d", ErrInvalidEntryOffset, payloadEnd, size)
+	}
+
+	trailerSize := size - payloadEnd
+	if trailerSize > 21 {
+		return nil, fmt.Errorf("%w: %d bytes follow the payload trailer", ErrUnexpectedTrailerData, trailerSize-21)
+	}
+	if trailerSize < 21 {
+		return nil, ErrTrailerTooShort
+	}
+
+	var trailer [21]byte
+	if _, err := ra.ReadAt(trailer[:], payloadEnd); err != nil {
+		return nil, fmt.Errorf("read trailer: %w", err)
+	}
+	if trailer[0] != 0 {
+		return nil, fmt.Errorf("%w: marker %#02x", ErrInvalidTrailerPrefix, trailer[0])
+	}
+
+	h := sha1.New() //nolint:gosec // Signature format requires SHA1.
+	if _, err := io.Copy(h, io.NewSectionReader(ra, 0, payloadEnd)); err != nil {
+		return nil, fmt.Errorf("hash PBO payload: %w", err)
+	}
+	if !bytes.Equal(h.Sum(nil), trailer[1:]) {
+		return nil, ErrTrailerHashMismatch
+	}
+
+	return h.Sum(nil), nil
 }
 
 // pboPrefixFromHeaders extracts the "prefix" header value from PBO metadata.

@@ -50,6 +50,8 @@ var (
 	ErrTrailerHashMismatch = errors.New("trailer hash mismatch")
 	// ErrInvalidSHA1DigestLength means the SHA1 digest length is invalid.
 	ErrInvalidSHA1DigestLength = errors.New("invalid SHA1 digest length")
+	// ErrUnexpectedTrailerData means data follows the expected SHA1 trailer.
+	ErrUnexpectedTrailerData = errors.New("unexpected data after SHA1 trailer")
 	// ErrInvalidEntryPath means one of input entry paths is empty or invalid after normalization.
 	ErrInvalidEntryPath = errors.New("invalid entry path")
 	// ErrDuplicateEntryPath means two inputs resolve to the same path (case-insensitive).
