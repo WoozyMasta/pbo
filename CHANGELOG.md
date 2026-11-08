@@ -29,6 +29,8 @@ and this project adheres to [Semantic Versioning][].
 
 * Signature hash generation now requires an explicit game type for V2
   and applies separate DayZ and Arma file selection policies.
+* Signature hashing canonicalizes PBO prefixes to backslash separators
+  before adding the signing separator.
 * Sanitization rewrites Windows device aliases,
   including `CONIN$`, `CONOUT$`, and the superscript-digit `COM`/`LPT` names.
 * `Editor.Commit` builds and syncs the rewritten archive

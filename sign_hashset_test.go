@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha1" //nolint:gosec // Test mirrors format SHA1 hashing pipeline.
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -189,6 +190,162 @@ func TestComputeSignNameHash_UsesASCIILowercase(t *testing.T) {
 
 	if !bytes.Equal(got, want) {
 		t.Fatalf("namehash mismatch:\n got  %x\n want %x", got, want)
+	}
+}
+
+// TestComputeSignHashMatchesOriginalPrefixVectors checks original signer digests.
+func TestComputeSignHashMatchesOriginalPrefixVectors(t *testing.T) {
+	t.Parallel()
+
+	hash1, err := hex.DecodeString("c4d8ecc9d1cdddb1e082e9b0afb228cd108384dc")
+	if err != nil {
+		t.Fatalf("decode original hash1: %v", err)
+	}
+	entries := []EntryInfo{
+		{Path: "probe.c", DataSize: 5},
+		{Path: "asset.paa", DataSize: 7},
+	}
+	nameHash := computeSignNameHash(entries)
+	fileHashV2 := sha1.Sum([]byte("alpha"))       //nolint:gosec // Test mirrors the original fixture.
+	fileHashArmaV3 := sha1.Sum([]byte("gnihton")) //nolint:gosec // Empty V3 filehash sentinel.
+	prefix := pboPrefixFromHeaders([]HeaderPair{{Key: PropertyPrefix, Value: `some\folder`}})
+
+	if got := fmt.Sprintf(
+		"%x", computeSignHash2(hash1, nameHash, prefix),
+	); got != "4169b4f387a5c05620aca336c921460ee8759be7" {
+		t.Fatalf("hash2=%s, want original signer hash2", got)
+	}
+	if got := fmt.Sprintf(
+		"%x", computeSignHash3(fileHashV2[:], nameHash, prefix),
+	); got != "3e4611b08121364ece2895eec3c13aae1d3b3a7a" {
+		t.Fatalf("V2 hash3=%s, want original signer hash3", got)
+	}
+	if got := fmt.Sprintf(
+		"%x", computeSignHash3(fileHashArmaV3[:], nameHash, prefix),
+	); got != "f547a2079f8f9d5a4b4741499a24b1869fbbc967" {
+		t.Fatalf("Arma V3 hash3=%s, want original signer hash3", got)
+	}
+}
+
+// TestPboPrefixFromHeadersNormalizesSigningPrefix checks canonical signing bytes.
+func TestPboPrefixFromHeadersNormalizesSigningPrefix(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		prefix  string
+		present bool
+		want    string
+	}{
+		{name: "forward separators", prefix: "some/folder", present: true, want: `some\folder`},
+		{name: "trailing forward separator", prefix: "some/folder/", present: true, want: `some\folder`},
+		{name: "trailing backward separator", prefix: `some\folder\`, present: true, want: `some\folder`},
+		{name: "mixed separators", prefix: `some/folder\child`, present: true, want: `some\folder\child`},
+		{name: "absent", want: ""},
+		{name: "empty", prefix: "", present: true, want: ""},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			headers := []HeaderPair(nil)
+			if test.present {
+				headers = []HeaderPair{{Key: PropertyPrefix, Value: test.prefix}}
+			}
+			gotPrefix := pboPrefixFromHeaders(headers)
+			if gotPrefix != test.want {
+				t.Fatalf("pboPrefixFromHeaders(%q)=%q, want %q", test.prefix, gotPrefix, test.want)
+			}
+
+			var gotFragment bytes.Buffer
+			writeSignPrefix(&gotFragment, gotPrefix)
+			wantFragment := test.want
+			if wantFragment != "" {
+				wantFragment += `\`
+			}
+			if gotFragment.String() != wantFragment {
+				t.Fatalf("signing prefix=%q, want %q", gotFragment.String(), wantFragment)
+			}
+		})
+	}
+}
+
+// TestComputeHashSetNormalizesPrefixSeparators verifies normalization through Reader.
+func TestComputeHashSetNormalizesPrefixSeparators(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "prefix.pbo")
+	inputs := []Input{{
+		Path: "probe.c",
+		Open: func() (io.ReadCloser, error) {
+			return io.NopCloser(bytes.NewReader([]byte("alpha"))), nil
+		},
+		SizeHint: int64(len("alpha")),
+	}}
+	if _, err := PackFile(context.Background(), path, inputs, PackOptions{
+		Headers: []HeaderPair{{Key: PropertyPrefix, Value: `some\folder`}},
+	}); err != nil {
+		t.Fatalf("PackFile: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+
+	value := []byte(`some\folder`)
+	valueOffset := bytes.Index(data, value)
+	if valueOffset < 0 {
+		t.Fatal("packed prefix not found")
+	}
+	for i := range value {
+		if value[i] == '\\' {
+			data[valueOffset+i] = '/'
+		}
+	}
+
+	bodyEnd := len(data) - 21
+	digest := sha1.Sum(data[:bodyEnd]) //nolint:gosec // Test mirrors PBO trailer hashing.
+	data[bodyEnd] = 0
+	copy(data[bodyEnd+1:], digest[:])
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	r, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = r.Close() }()
+
+	storedPrefix, _ := propertyValue(r.Headers(), PropertyPrefix)
+	if storedPrefix != "some/folder" {
+		t.Fatalf("stored prefix=%q, want raw forward-slash value", storedPrefix)
+	}
+	if got := pboPrefixFromHeaders(r.Headers()); got != `some\folder` {
+		t.Fatalf("signing prefix=%q, want canonical backslashes", got)
+	}
+
+	hashSet, err := ComputeHashSet(path, SignVersionV2, GameTypeDayZ)
+	if err != nil {
+		t.Fatalf("ComputeHashSet: %v", err)
+	}
+
+	entries := r.Entries()
+	nameHash := computeSignNameHash(entries)
+	wantHash2 := computeSignHash2(hashSet.Hash1[:], nameHash, `some\folder`)
+	if !bytes.Equal(hashSet.Hash2[:], wantHash2) {
+		t.Fatalf("hash2=%x, want canonical-prefix hash %x", hashSet.Hash2, wantHash2)
+	}
+
+	fileHash, err := computeSignFileHashFromReaderAt(r.ra, entries, SignVersionV2, GameTypeDayZ)
+	if err != nil {
+		t.Fatalf("computeSignFileHashFromReaderAt: %v", err)
+	}
+
+	wantHash3 := computeSignHash3(fileHash, nameHash, `some\folder`)
+	if !bytes.Equal(hashSet.Hash3[:], wantHash3) {
+		t.Fatalf("hash3=%x, want canonical-prefix hash %x", hashSet.Hash3, wantHash3)
 	}
 }
 

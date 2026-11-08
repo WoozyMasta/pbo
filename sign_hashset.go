@@ -149,7 +149,7 @@ func computeSignHash1ForSigning(ra io.ReaderAt, size, payloadEnd int64) ([]byte,
 func pboPrefixFromHeaders(headers []HeaderPair) string {
 	prefix, _ := propertyValue(headers, PropertyPrefix)
 
-	return prefix
+	return NormalizePrefixHeader(prefix)
 }
 
 // computeSignHash1 hashes full PBO content excluding optional 21-byte trailer.
@@ -231,16 +231,14 @@ func computeHash1FromSections(headerSection, indexBuf []byte, ra io.ReaderAt, da
 	return h.Sum(nil), nil
 }
 
-// writeSignPrefix appends normalized prefix fragment used by hash2/hash3.
+// writeSignPrefix appends the signing separator to every non-empty prefix.
 func writeSignPrefix(h io.Writer, prefix string) {
 	if prefix == "" {
 		return
 	}
 
 	_, _ = h.Write([]byte(prefix))
-	if !strings.HasSuffix(prefix, "\\") {
-		_, _ = h.Write([]byte("\\"))
-	}
+	_, _ = h.Write([]byte("\\"))
 }
 
 // computeSignHash2 builds hash2 from hash1, namehash, and optional prefix.
