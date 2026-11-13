@@ -54,7 +54,7 @@ var (
 	ErrUnexpectedTrailerData = errors.New("unexpected data after SHA1 trailer")
 	// ErrInvalidEntryPath means one of input entry paths is empty or invalid after normalization.
 	ErrInvalidEntryPath = errors.New("invalid entry path")
-	// ErrDuplicateEntryPath means two inputs resolve to the same path (case-insensitive).
+	// ErrDuplicateEntryPath means archive entries or pack inputs resolve to the same logical path.
 	ErrDuplicateEntryPath = errors.New("duplicate entry path")
 	// ErrAmbiguousEntryPath means a path operation matches multiple archive entries.
 	ErrAmbiguousEntryPath = errors.New("ambiguous entry path")

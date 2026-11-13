@@ -25,9 +25,12 @@ type extractWorkItem struct {
 	entry   EntryInfo
 }
 
-// Extract writes selected entries from the PBO to dstDir. Extraction is parallelized
-// by MaxWorkers. By default extraction is fail-fast; set ContinueOnError to keep
-// processing and return the first encountered error at the end.
+// Extract writes selected entries from the PBO to dstDir.
+//
+// Extraction is parallelized by MaxWorkers.
+// Colliding output paths are rejected before entry writes begin.
+// By default extraction is fail-fast;
+// set ContinueOnError to keep processing and return the first encountered error at the end.
 func (r *Reader) Extract(ctx context.Context, dstDir string, opts ExtractOptions) error {
 	if r == nil || r.ra == nil {
 		return ErrNilReader
@@ -175,6 +178,8 @@ func extractWorkerCount(requested int, workItemCount int) int {
 // prepareExtractWorkItems validates selected entries and prepares relative fs paths.
 func prepareExtractWorkItems(entries []EntryInfo) ([]extractWorkItem, error) {
 	workItems := make([]extractWorkItem, 0, len(entries))
+	// Track files and implicit directories using one case-folded path map.
+	pathKinds := make(map[string]bool, len(entries))
 	for _, entry := range entries {
 		if strings.TrimSpace(entry.Path) == "" {
 			continue
@@ -192,6 +197,31 @@ func prepareExtractWorkItems(entries []EntryInfo) ([]extractWorkItem, error) {
 		if !filepath.IsLocal(relPath) {
 			return nil, fmt.Errorf("entry path %s: %w", entry.Path, ErrExtractPathOutsideRoot)
 		}
+
+		collisionKey := strings.ToLower(filepath.ToSlash(relPath))
+		if isFile, exists := pathKinds[collisionKey]; exists {
+			if isFile {
+				return nil, fmt.Errorf("entry path %q resolves to a duplicate output path: %w", entry.Path, ErrDuplicateEntryPath)
+			}
+			return nil, fmt.Errorf("entry path %q conflicts with an entry directory: %w", entry.Path, ErrDuplicateEntryPath)
+		}
+
+		parts := strings.Split(collisionKey, "/")
+		parentKey := ""
+		for _, part := range parts[:len(parts)-1] {
+			if parentKey == "" {
+				parentKey = part
+			} else {
+				parentKey += "/" + part
+			}
+
+			if isFile, exists := pathKinds[parentKey]; exists && isFile {
+				return nil, fmt.Errorf("entry path %q is nested under a file entry: %w", entry.Path, ErrDuplicateEntryPath)
+			}
+
+			pathKinds[parentKey] = false
+		}
+		pathKinds[collisionKey] = true
 
 		relDir := filepath.Dir(relPath)
 		if relDir == "." || relDir == "" {

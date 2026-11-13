@@ -688,23 +688,41 @@ func tryAssignStoredOffsets(entries []EntryInfo, dataStart int64, totalSize int6
 		return false, nil
 	}
 
+	storedOffsets := make([]uint32, len(entries))
+	for i := range entries {
+		storedOffsets[i] = entries[i].Offset
+	}
+
 	first := entries[0].Offset
+	tryOffsets := func(absolute bool) bool {
+		// Each interpretation must start from the offsets read from the index.
+		for i := range entries {
+			entries[i].Offset = storedOffsets[i]
+		}
+
+		return assignStoredOffsets(entries, dataStart, totalSize, absolute) == nil
+	}
+
 	// Heuristic: first offset zero usually means relative, first >= dataStart usually absolute.
 	tryRelativeFirst := first == 0 || int64(first) < dataStart
 	if tryRelativeFirst {
-		if err := assignStoredOffsets(entries, dataStart, totalSize, false); err == nil {
+		if tryOffsets(false) {
 			return true, nil
 		}
-		if err := assignStoredOffsets(entries, dataStart, totalSize, true); err == nil {
+		if tryOffsets(true) {
 			return true, nil
 		}
 	} else {
-		if err := assignStoredOffsets(entries, dataStart, totalSize, true); err == nil {
+		if tryOffsets(true) {
 			return true, nil
 		}
-		if err := assignStoredOffsets(entries, dataStart, totalSize, false); err == nil {
+		if tryOffsets(false) {
 			return true, nil
 		}
+	}
+
+	for i := range entries {
+		entries[i].Offset = storedOffsets[i]
 	}
 
 	return false, errors.New("stored offsets are malformed")

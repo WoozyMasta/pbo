@@ -330,6 +330,31 @@ func TestOpenWithOptions_StoredOffsetStrictRejectsMalformed(t *testing.T) {
 	}
 }
 
+func TestResolveEntryOffsetsStoredModesDoNotMixOffsetInterpretations(t *testing.T) {
+	t.Parallel()
+
+	newEntries := func() []EntryInfo {
+		return []EntryInfo{
+			{Path: "first.bin", Offset: 0, DataSize: 10},
+			{Path: "second.bin", Offset: 250, DataSize: 10},
+		}
+	}
+
+	if err := resolveEntryOffsets(
+		newEntries(), 100, 300, OffsetModeStoredStrict,
+	); !errors.Is(err, ErrInvalidEntryOffset) {
+		t.Fatalf("strict mode error = %v, want ErrInvalidEntryOffset", err)
+	}
+
+	entries := newEntries()
+	if err := resolveEntryOffsets(entries, 100, 300, OffsetModeStoredCompat); err != nil {
+		t.Fatalf("compat mode: %v", err)
+	}
+	if entries[0].Offset != 100 || entries[1].Offset != 110 {
+		t.Fatalf("compat offsets = [%d, %d], want sequential [100, 110]", entries[0].Offset, entries[1].Offset)
+	}
+}
+
 func TestOpenWithOptions_JunkFilter(t *testing.T) {
 	t.Parallel()
 

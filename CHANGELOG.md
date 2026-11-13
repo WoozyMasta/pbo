@@ -38,6 +38,11 @@ and this project adheres to [Semantic Versioning][].
 * `ComputeHashSet` validates the SHA-1 trailer at the resolved payload end
   and rejects missing, malformed, or mismatched trailer data.
 
+### Fixed
+
+* Stored-offset retries no longer mix partial interpretations;
+  extraction rejects colliding output paths before writing.
+
 ## [0.4.0][] - 2026-10-19
 
 ### Added

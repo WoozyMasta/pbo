@@ -267,7 +267,7 @@ type ExtractOptions struct {
 	// Default false is fail-fast mode.
 	ContinueOnError bool `json:"continue_on_error,omitempty" yaml:"continue_on_error,omitempty"`
 	// RawNames disables default path sanitization during extract.
-	// When false (default), extract rewrites names to filesystem-safe output paths.
+	// Colliding output paths are still rejected before writing.
 	RawNames bool `json:"raw_names,omitempty" yaml:"raw_names,omitempty"`
 }
 
