@@ -30,6 +30,8 @@ var (
 	ErrInvalidOutputTarget = errors.New("invalid file output target")
 	// ErrEntryNotFound means the entry is not found.
 	ErrEntryNotFound = errors.New("entry not found")
+	// ErrEntryDecompression means a compressed entry could not be decoded or validated.
+	ErrEntryDecompression = errors.New("entry decompression failed")
 	// ErrClosed means the reader or resource is already closed.
 	ErrClosed = errors.New("reader or resource already closed")
 	// ErrSizeOverflow means the size exceeds the uint32 or 4 GiB PBO limit.

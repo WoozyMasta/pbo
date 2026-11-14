@@ -5,9 +5,13 @@
 package pbo
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -29,6 +33,7 @@ type extractWorkItem struct {
 //
 // Extraction is parallelized by MaxWorkers.
 // Colliding output paths are rejected before entry writes begin.
+// Compressed output is staged until decoding and checksum validation succeed.
 // By default extraction is fail-fast;
 // set ContinueOnError to keep processing and return the first encountered error at the end.
 func (r *Reader) Extract(ctx context.Context, dstDir string, opts ExtractOptions) error {
@@ -275,6 +280,15 @@ func (r *Reader) extractPreparedEntry(
 	default:
 	}
 
+	if task.entry.IsCompressed() {
+		if task.entry.DataSize <= uint32(maxBufferedCompressedCopySize) &&
+			task.entry.OriginalSize <= uint32(maxBufferedCompressedCopySize) {
+			return r.extractBufferedCompressedPreparedEntry(ctx, root, dstRootAbs, task, fileMode, onEntryDone)
+		}
+
+		return r.extractCompressedPreparedEntry(ctx, root, dstRootAbs, task, fileMode, copyBuf, onEntryDone)
+	}
+
 	outPath := filepath.Join(dstRootAbs, task.relPath)
 
 	expectedSize := int64(task.entry.DataSize)
@@ -309,6 +323,170 @@ func (r *Reader) extractPreparedEntry(
 	}
 
 	return nil
+}
+
+// extractBufferedCompressedPreparedEntry validates a small LZSS entry before opening its output.
+func (r *Reader) extractBufferedCompressedPreparedEntry(
+	ctx context.Context,
+	root *os.Root,
+	dstRootAbs string,
+	task extractWorkItem,
+	fileMode ExtractFileMode,
+	onEntryDone func(entry EntryInfo, written int64, outputPath string),
+) error {
+	var decoded bytes.Buffer
+	written, err := r.copyEntryPayloadTo(&task.entry, &decoded, nil)
+	if err != nil {
+		return fmt.Errorf("decode entry: %w", err)
+	}
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
+	file, needsTruncate, err := openExtractFile(root, task.relPath, fileMode, written)
+	if err != nil {
+		return fmt.Errorf("open %s: %w", task.entry.Path, err)
+	}
+
+	counter := &entryOutputCounter{Writer: writerOnly{file}}
+	writeErr := writePayloadBytes(counter, decoded.Bytes())
+	if writeErr == nil && needsTruncate {
+		writeErr = file.Truncate(counter.written)
+	}
+
+	closeErr := file.Close()
+	if writeErr != nil {
+		return fmt.Errorf("write %s: %w", task.entry.Path, writeErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("close %s: %w", task.entry.Path, closeErr)
+	}
+
+	if onEntryDone != nil {
+		onEntryDone(task.entry, counter.written, filepath.Join(dstRootAbs, task.relPath))
+	}
+
+	return nil
+}
+
+// extractCompressedPreparedEntry stages decoded bytes until the LZSS checksum succeeds.
+func (r *Reader) extractCompressedPreparedEntry(
+	ctx context.Context,
+	root *os.Root,
+	dstRootAbs string,
+	task extractWorkItem,
+	fileMode ExtractFileMode,
+	copyBuf []byte,
+	onEntryDone func(entry EntryInfo, written int64, outputPath string),
+) error {
+	stagePath, stage, err := openExtractStageFile(root, task.relDir)
+	if err != nil {
+		return fmt.Errorf("stage %s: %w", task.entry.Path, err)
+	}
+	defer func() { _ = root.Remove(stagePath) }()
+
+	written, copyErr := r.copyEntryPayloadTo(&task.entry, stage, copyBuf)
+	closeErr := stage.Close()
+	if copyErr != nil {
+		return fmt.Errorf("decode entry: %w", copyErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("close staged %s: %w", task.entry.Path, closeErr)
+	}
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
+	outPath := filepath.Join(dstRootAbs, task.relPath)
+	if commitStagedExtract(root, stagePath, task.relPath, fileMode) {
+		if onEntryDone != nil {
+			onEntryDone(task.entry, written, outPath)
+		}
+
+		return nil
+	}
+
+	staged, err := root.Open(stagePath)
+	if err != nil {
+		return fmt.Errorf("open staged %s: %w", task.entry.Path, err)
+	}
+	defer func() { _ = staged.Close() }()
+
+	file, needsTruncate, err := openExtractFile(root, task.relPath, fileMode, written)
+	if err != nil {
+		return fmt.Errorf("open %s: %w", task.entry.Path, err)
+	}
+
+	copied, copyErr := io.CopyBuffer(writerOnly{file}, readerOnly{staged}, copyBuf)
+	if copyErr == nil && copied != written {
+		copyErr = io.ErrUnexpectedEOF
+	}
+	if copyErr == nil && needsTruncate {
+		copyErr = file.Truncate(copied)
+	}
+
+	closeErr = file.Close()
+	if copyErr != nil {
+		return fmt.Errorf("write %s: %w", task.entry.Path, copyErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("close %s: %w", task.entry.Path, closeErr)
+	}
+
+	if onEntryDone != nil {
+		onEntryDone(task.entry, written, outPath)
+	}
+
+	return nil
+}
+
+// commitStagedExtract atomically installs a staged file when the destination is absent.
+func commitStagedExtract(root *os.Root, stagePath, outputPath string, fileMode ExtractFileMode) bool {
+	if _, err := root.Lstat(outputPath); !errors.Is(err, os.ErrNotExist) {
+		return false
+	}
+
+	switch fileMode {
+	case ExtractFileModeCreateOnly:
+		return root.Link(stagePath, outputPath) == nil
+
+	case ExtractFileModeAuto, ExtractFileModeOverwriteSmart, ExtractFileModeTruncate:
+		return root.Rename(stagePath, outputPath) == nil
+
+	default:
+		return false
+	}
+}
+
+// openExtractStageFile creates a unique temporary file inside the destination root.
+func openExtractStageFile(root *os.Root, relDir string) (string, *os.File, error) {
+	var suffix [16]byte
+	for range 8 {
+		if _, err := rand.Read(suffix[:]); err != nil {
+			return "", nil, err
+		}
+
+		name := ".pbo-extract-" + hex.EncodeToString(suffix[:]) + ".tmp"
+		path := name
+		if relDir != "" {
+			path = filepath.Join(relDir, name)
+		}
+		file, err := root.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if err == nil {
+			return path, file, nil
+		}
+		if !errors.Is(err, os.ErrExist) {
+			return "", nil, err
+		}
+	}
+
+	return "", nil, fmt.Errorf("could not allocate a unique staging path: %w", os.ErrExist)
 }
 
 // openExtractFile opens output path according to selected extract file mode.

@@ -16,6 +16,26 @@ import (
 // maxBufferedCompressedCopySize keeps small-entry copies below one LZSS history window.
 const maxBufferedCompressedCopySize = lzss.WindowSize
 
+// readerOnly hides optional interfaces (WriterTo) from an io.Reader.
+// io.SectionReader implements WriterTo since Go 1.22;
+// without this wrapper io.CopyBuffer ignores the caller-supplied buffer and allocates 32 KiB per call.
+type readerOnly struct {
+	io.Reader
+}
+
+// writerOnly hides optional interfaces (ReaderFrom) from an io.Writer.
+// *os.File implements ReaderFrom on Windows;
+// without this wrapper io.CopyBuffer ignores the caller-supplied buffer and allocates 32 KiB per call.
+type writerOnly struct {
+	io.Writer
+}
+
+// entryOutputCounter records bytes exposed to callers when decoding later fails.
+type entryOutputCounter struct {
+	io.Writer       // Destination that receives decoded output.
+	written   int64 // Number of bytes accepted by the destination.
+}
+
 // nopCloser wraps a reader and provides a no-op close.
 type nopCloser struct {
 	io.Reader
@@ -160,7 +180,7 @@ func (r *Reader) readEntryByInfo(info *EntryInfo, name string) ([]byte, error) {
 
 	data, _, err := lzss.DecompressFromReader(bufio.NewReaderSize(sr, lzss.WindowSize), outLen, nil)
 	if err != nil {
-		return nil, fmt.Errorf("decompress entry %s: %w", name, err)
+		return nil, wrapEntryDecompressionError(name, err)
 	}
 
 	return data, nil
@@ -170,22 +190,20 @@ func (r *Reader) readEntryByInfo(info *EntryInfo, name string) ([]byte, error) {
 func streamDecompressEntry(name string, dst *io.PipeWriter, src io.Reader, outLen int) {
 	_, err := lzss.DecompressToWriter(dst, bufio.NewReaderSize(src, lzss.WindowSize), outLen, nil)
 	if err != nil {
-		_ = dst.CloseWithError(fmt.Errorf("decompress entry %s: %w", name, err))
+		_ = dst.CloseWithError(wrapEntryDecompressionError(name, err))
 		return
 	}
 
 	_ = dst.Close()
 }
 
-// readerOnly hides optional interfaces (WriterTo) from an io.Reader.
-// io.SectionReader implements WriterTo since Go 1.22;
-// without this wrapper io.CopyBuffer ignores the caller-supplied buffer and allocates 32 KiB per call.
-type readerOnly struct{ io.Reader }
+// Write forwards bytes and records the number accepted by the destination.
+func (w *entryOutputCounter) Write(p []byte) (int, error) {
+	n, err := w.Writer.Write(p)
+	w.written += int64(n)
 
-// writerOnly hides optional interfaces (ReaderFrom) from an io.Writer.
-// *os.File implements ReaderFrom on Windows;
-// without this wrapper io.CopyBuffer ignores the caller-supplied buffer and allocates 32 KiB per call.
-type writerOnly struct{ io.Writer }
+	return n, err
+}
 
 // copyEntryPayloadTo copies one entry payload (decompressing if needed) directly into dst
 // without spawning a goroutine or pipe. buf is used for uncompressed copies; nil is safe.
@@ -218,25 +236,32 @@ func (r *Reader) copyEntryPayloadTo(info *EntryInfo, dst io.Writer, buf []byte) 
 
 		data, _, err := lzss.DecompressBlock(packed, outLen, nil)
 		if err != nil {
-			return 0, fmt.Errorf("decompress entry %s: %w", info.Path, err)
+			return 0, wrapEntryDecompressionError(info.Path, err)
 		}
-		if err := writePayloadBytes(dst, data); err != nil {
-			return 0, fmt.Errorf("write decompressed entry %s: %w", info.Path, err)
+		counter := &entryOutputCounter{Writer: writerOnly{dst}}
+		if err := writePayloadBytes(counter, data); err != nil {
+			return counter.written, fmt.Errorf("write decompressed entry %s: %w", info.Path, err)
 		}
 
-		return int64(len(data)), nil
+		return counter.written, nil
 	}
 
+	counter := &entryOutputCounter{Writer: writerOnly{dst}}
 	if _, err := lzss.DecompressToWriter(
-		dst,
+		counter,
 		bufio.NewReaderSize(sr, lzss.WindowSize),
 		outLen,
 		nil,
 	); err != nil {
-		return 0, err
+		return counter.written, wrapEntryDecompressionError(info.Path, err)
 	}
 
-	return int64(outLen), nil
+	return counter.written, nil
+}
+
+// wrapEntryDecompressionError adds the stable PBO error while preserving codec details.
+func wrapEntryDecompressionError(name string, err error) error {
+	return fmt.Errorf("decompress entry %s: %w: %w", name, ErrEntryDecompression, err)
 }
 
 // CopyEntryTo decompresses and copies the named entry into dst using the provided buf.

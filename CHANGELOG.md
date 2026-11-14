@@ -40,6 +40,9 @@ and this project adheres to [Semantic Versioning][].
 
 ### Fixed
 
+* Compressed read errors expose `ErrEntryDecompression`
+  and report bytes written;
+  extraction leaves destination files untouched when decoding fails.
 * Stored-offset retries no longer mix partial interpretations;
   extraction rejects colliding output paths before writing.
 
