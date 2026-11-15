@@ -39,17 +39,19 @@ type canonicalCorpusFile struct {
 }
 
 type canonicalPBOArtifact struct {
-	ID              string `json:"id"`
-	Path            string `json:"path"`
-	Bytes           int64  `json:"bytes"`
-	SHA256          string `json:"sha256"`
-	EntryCount      int    `json:"entry_count"`
-	PayloadStart    int64  `json:"payload_start"`
-	PayloadBytes    int64  `json:"payload_bytes"`
-	PayloadEnd      int64  `json:"payload_end"`
-	TrailerMarker   byte   `json:"trailer_marker"`
-	TrailerSHA1     string `json:"trailer_sha1"`
-	IndependentSHA1 string `json:"independent_sha1"`
+	ID              string              `json:"id"`
+	Path            string              `json:"path"`
+	PayloadManifest canonicalCorpusFile `json:"payload_manifest,omitempty"`
+	Properties      map[string]string   `json:"properties"`
+	Bytes           int64               `json:"bytes"`
+	SHA256          string              `json:"sha256"`
+	EntryCount      int                 `json:"entry_count"`
+	PayloadStart    int64               `json:"payload_start"`
+	PayloadBytes    int64               `json:"payload_bytes"`
+	PayloadEnd      int64               `json:"payload_end"`
+	TrailerMarker   byte                `json:"trailer_marker"`
+	TrailerSHA1     string              `json:"trailer_sha1"`
+	IndependentSHA1 string              `json:"independent_sha1"`
 }
 
 type canonicalSignatureArtifact struct {
@@ -69,13 +71,26 @@ type canonicalSignatureArtifact struct {
 }
 
 type canonicalSourceManifest struct {
-	FileCount  int    `json:"file_count"`
-	TreeSHA256 string `json:"tree_sha256"`
-	Files      []struct {
-		Path   string `json:"path"`
-		Bytes  int64  `json:"bytes"`
-		SHA256 string `json:"sha256"`
-	} `json:"files"`
+	FileCount  int                   `json:"file_count"`
+	TreeSHA256 string                `json:"tree_sha256"`
+	Files      []canonicalSourceFile `json:"files"`
+}
+
+// canonicalSourceFile describes one immutable source fixture.
+type canonicalSourceFile struct {
+	Path   string `json:"path"`
+	Bytes  int64  `json:"bytes"`
+	SHA256 string `json:"sha256"`
+}
+
+// canonicalPayloadManifest pins decoded records from one original-tool PBO.
+type canonicalPayloadManifest struct {
+	SchemaVersion   int                   `json:"schema_version"`
+	Provenance      string                `json:"provenance"`
+	SourcePBOSHA256 string                `json:"source_pbo_sha256"`
+	FileCount       int                   `json:"file_count"`
+	TreeSHA256      string                `json:"tree_sha256"`
+	Files           []canonicalSourceFile `json:"files"`
 }
 
 type biPublicKey struct {
@@ -88,25 +103,10 @@ type biPublicKey struct {
 // TestCanonicalCorpusIntegrity verifies frozen fixture bytes without using PBO or bisign APIs.
 func TestCanonicalCorpusIntegrity(t *testing.T) {
 	root := canonicalCorpusDir
-	manifestBytes := readCorpusFile(t, filepath.Join(root, "manifest.json"))
-	var manifest canonicalCorpusManifest
-	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
-		t.Fatalf("decode corpus manifest: %v", err)
-	}
+	manifest := loadCanonicalCorpusManifest(t)
 
-	sourceManifestBytes := readCorpusFile(
-		t, filepath.Join(root, filepath.FromSlash(manifest.SourceManifest.Path)),
-	)
-	assertSHA256(t, sourceManifestBytes, manifest.SourceManifest.SHA256, "source manifest")
-	var sourceManifest canonicalSourceManifest
-	if err := json.Unmarshal(sourceManifestBytes, &sourceManifest); err != nil {
-		t.Fatalf("decode source manifest: %v", err)
-	}
-	if len(sourceManifest.Files) != sourceManifest.FileCount {
-		t.Fatalf("source file count=%d, manifest says %d", len(sourceManifest.Files), sourceManifest.FileCount)
-	}
+	sourceManifest := loadCanonicalSourceManifest(t, manifest)
 
-	sourceRows := make([]string, 0, len(sourceManifest.Files))
 	for _, source := range sourceManifest.Files {
 		path := filepath.Join(root, "source", filepath.FromSlash(source.Path))
 		data := readCorpusFile(t, path)
@@ -115,13 +115,10 @@ func TestCanonicalCorpusIntegrity(t *testing.T) {
 		}
 
 		assertSHA256(t, data, source.SHA256, "source "+source.Path)
-		sourceRows = append(
-			sourceRows,
-			fmt.Sprintf("%s\x00%d\x00%s", source.Path, source.Bytes, strings.ToLower(source.SHA256)),
-		)
 	}
-
-	assertSHA256(t, []byte(strings.Join(sourceRows, "\n")), sourceManifest.TreeSHA256, "source tree")
+	if got := canonicalSourceTreeSHA256(sourceManifest.Files); got != sourceManifest.TreeSHA256 {
+		t.Errorf("source tree SHA-256=%s, want %s", got, sourceManifest.TreeSHA256)
+	}
 
 	for _, key := range manifest.PublicKeys {
 		data := readCorpusFile(t, filepath.Join(root, filepath.FromSlash(key.Path)))
@@ -136,6 +133,9 @@ func TestCanonicalCorpusIntegrity(t *testing.T) {
 
 		assertSHA256(t, data, artifact.SHA256, "PBO "+artifact.ID)
 		verifyCanonicalPBO(t, data, artifact)
+		if artifact.PayloadManifest.Path != "" {
+			_ = loadCanonicalPayloadManifest(t, artifact)
+		}
 	}
 
 	for _, signature := range manifest.Signatures {
@@ -185,11 +185,7 @@ func TestCanonicalCorpusIntegrity(t *testing.T) {
 
 // TestComputeHashSetMatchesOriginalSignatureVectors checks all canonical signer digests.
 func TestComputeHashSetMatchesOriginalSignatureVectors(t *testing.T) {
-	manifestData := readCorpusFile(t, filepath.Join(canonicalCorpusDir, "manifest.json"))
-	var manifest canonicalCorpusManifest
-	if err := json.Unmarshal(manifestData, &manifest); err != nil {
-		t.Fatalf("decode corpus manifest: %v", err)
-	}
+	manifest := loadCanonicalCorpusManifest(t)
 
 	for _, signature := range manifest.Signatures {
 		t.Run(signature.ID, func(t *testing.T) {
@@ -210,6 +206,85 @@ func TestComputeHashSetMatchesOriginalSignatureVectors(t *testing.T) {
 			assertDigest(t, hashes.Hash3, signature.Hashes.Hash3, signature.ID+" hash3")
 		})
 	}
+}
+
+// loadCanonicalCorpusManifest reads the fixture index used by corpus tests.
+func loadCanonicalCorpusManifest(t *testing.T) canonicalCorpusManifest {
+	t.Helper()
+
+	manifestData := readCorpusFile(t, filepath.Join(canonicalCorpusDir, "manifest.json"))
+	var manifest canonicalCorpusManifest
+	if err := json.Unmarshal(manifestData, &manifest); err != nil {
+		t.Fatalf("decode corpus manifest: %v", err)
+	}
+
+	return manifest
+}
+
+// loadCanonicalSourceManifest reads and verifies the self-authored source fixture index.
+func loadCanonicalSourceManifest(t *testing.T, manifest canonicalCorpusManifest) canonicalSourceManifest {
+	t.Helper()
+
+	path := filepath.Join(canonicalCorpusDir, filepath.FromSlash(manifest.SourceManifest.Path))
+	data := readCorpusFile(t, path)
+	assertSHA256(t, data, manifest.SourceManifest.SHA256, "source manifest")
+	var source canonicalSourceManifest
+	if err := json.Unmarshal(data, &source); err != nil {
+		t.Fatalf("decode source manifest: %v", err)
+	}
+	if len(source.Files) != source.FileCount {
+		t.Fatalf("source file count=%d, manifest says %d", len(source.Files), source.FileCount)
+	}
+
+	return source
+}
+
+// loadCanonicalPayloadManifest verifies the expected extracted files against their source PBO.
+func loadCanonicalPayloadManifest(t *testing.T, artifact canonicalPBOArtifact) canonicalPayloadManifest {
+	t.Helper()
+
+	path := filepath.Join(canonicalCorpusDir, filepath.FromSlash(artifact.PayloadManifest.Path))
+	data := readCorpusFile(t, path)
+	assertSHA256(t, data, artifact.PayloadManifest.SHA256, "payload manifest "+artifact.ID)
+	var payload canonicalPayloadManifest
+	if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatalf("decode payload manifest %s: %v", artifact.ID, err)
+	}
+
+	if payload.SchemaVersion != 1 || payload.Provenance != "ORIGINAL_VERIFIED" {
+		t.Fatalf("payload manifest %s has unsupported schema or provenance", artifact.ID)
+	}
+	if payload.SourcePBOSHA256 != artifact.SHA256 {
+		t.Fatalf(
+			"payload manifest %s is for PBO %s, want %s",
+			artifact.ID, payload.SourcePBOSHA256, artifact.SHA256,
+		)
+	}
+	if len(payload.Files) != payload.FileCount || payload.FileCount != artifact.EntryCount {
+		t.Fatalf(
+			"payload manifest %s file count=%d, want %d",
+			artifact.ID, payload.FileCount, artifact.EntryCount,
+		)
+	}
+	if got := canonicalSourceTreeSHA256(payload.Files); got != payload.TreeSHA256 {
+		t.Fatalf(
+			"payload manifest %s tree SHA-256=%s, want %s",
+			artifact.ID, got, payload.TreeSHA256,
+		)
+	}
+
+	return payload
+}
+
+// canonicalSourceTreeSHA256 returns the manifest tree digest for ordered path/size/hash rows.
+func canonicalSourceTreeSHA256(files []canonicalSourceFile) string {
+	rows := make([]string, 0, len(files))
+	for _, file := range files {
+		rows = append(rows, fmt.Sprintf("%s\x00%d\x00%s", file.Path, file.Bytes, strings.ToLower(file.SHA256)))
+	}
+
+	digest := sha256.Sum256([]byte(strings.Join(rows, "\n")))
+	return hex.EncodeToString(digest[:])
 }
 
 // readCorpusFile reads one fixture and fails the test with its path on error.
@@ -246,6 +321,7 @@ func verifyCanonicalPBO(t *testing.T, data []byte, artifact canonicalPBOArtifact
 	}
 
 	offset := 21
+	properties := make(map[string]string)
 	for {
 		key, next, err := readCanonicalCString(data, offset)
 		if err != nil {
@@ -257,12 +333,21 @@ func verifyCanonicalPBO(t *testing.T, data []byte, artifact canonicalPBOArtifact
 			break
 		}
 
-		_, next, err = readCanonicalCString(data, offset)
+		value, next, err := readCanonicalCString(data, offset)
 		if err != nil {
 			t.Fatalf("PBO %s property %q value: %v", artifact.ID, key, err)
 		}
 
+		if _, duplicate := properties[key]; duplicate {
+			t.Fatalf("PBO %s has duplicate property %q", artifact.ID, key)
+		}
+
+		properties[key] = value
 		offset = next
+	}
+
+	if !equalHeaderPropertyMap(properties, artifact.Properties) {
+		t.Errorf("PBO %s properties=%v, want %v", artifact.ID, properties, artifact.Properties)
 	}
 
 	dataStart := int64(0)
@@ -330,6 +415,21 @@ func verifyCanonicalPBO(t *testing.T, data []byte, artifact canonicalPBOArtifact
 	if !bytes.Equal(stored, computed[:]) {
 		t.Errorf("PBO %s stored trailer does not match independent SHA-1", artifact.ID)
 	}
+}
+
+// equalHeaderPropertyMap compares fixture header values without imposing an order absent from the manifest.
+func equalHeaderPropertyMap(got, want map[string]string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+
+	for key, value := range want {
+		if got[key] != value {
+			return false
+		}
+	}
+
+	return true
 }
 
 // readCanonicalCString returns a NUL-terminated UTF-8 string and the next byte offset.

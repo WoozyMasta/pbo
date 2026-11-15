@@ -76,6 +76,10 @@
     {
       "id": "arma-addonbuilder",
       "path": "arma/addonbuilder/source.pbo",
+      "payload_manifest": {
+        "path": "arma/addonbuilder/payload-manifest.json",
+        "sha256": "6ca437e9f0350b63480b0e3af6c1fbca59519eb0af1d84e1c20dec460a047b7f"
+      },
       "bytes": 14661,
       "sha256": "c90250fffc267ee68d9f3b493e69ee31ad65f01f22495cc8274f2cc95ff41b90",
       "entry_count": 46,

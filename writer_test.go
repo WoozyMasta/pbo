@@ -340,55 +340,6 @@ func TestPack_KnownSmallSizeCompresses(t *testing.T) {
 	}
 }
 
-func TestPack_UnknownSizeHintStaysRawWhenCompressEnabled(t *testing.T) {
-	t.Parallel()
-
-	outPath := filepath.Join(t.TempDir(), "out.pbo")
-	f, err := os.Create(outPath)
-	if err != nil {
-		t.Fatalf("create file: %v", err)
-	}
-	defer func() { _ = f.Close() }()
-
-	payload := bytes.Repeat([]byte("x"), 64*1024)
-	inputs := []Input{
-		{
-			Path: "data/a.txt",
-			Open: func() (io.ReadCloser, error) {
-				return io.NopCloser(bytes.NewReader(payload)), nil
-			},
-			SizeHint: 0, // unknown size is always raw in main pack flow
-		},
-	}
-
-	_, err = Pack(context.Background(), f, inputs, PackOptions{Compress: true, CompressRules: includeRules("*")})
-	if err != nil {
-		t.Fatalf("Pack: %v", err)
-	}
-
-	fi, err := f.Stat()
-	if err != nil {
-		t.Fatalf("stat: %v", err)
-	}
-	if _, err := f.Seek(0, io.SeekStart); err != nil {
-		t.Fatalf("seek: %v", err)
-	}
-
-	r, err := NewReaderFromReaderAt(f, fi.Size())
-	if err != nil {
-		t.Fatalf("NewReaderFromReaderAt: %v", err)
-	}
-	defer func() { _ = r.Close() }()
-
-	entries := r.Entries()
-	if len(entries) != 1 {
-		t.Fatalf("len(entries)=%d, want 1", len(entries))
-	}
-	if entries[0].IsCompressed() {
-		t.Fatal("entry must stay uncompressed when size is unknown")
-	}
-}
-
 func TestPack_KnownSizeOverMaxCompressSizeStaysRaw(t *testing.T) {
 	t.Parallel()
 

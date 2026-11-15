@@ -1,0 +1,239 @@
+{
+  "schema_version": 1,
+  "provenance": "ORIGINAL_VERIFIED",
+  "source_pbo_sha256": "c90250fffc267ee68d9f3b493e69ee31ad65f01f22495cc8274f2cc95ff41b90",
+  "file_count": 46,
+  "tree_sha256": "c12f01de0faa4a041d71910507ede8bf069b9a892b978db4775398635e1973c9",
+  "files": [
+    {
+      "path": "arma-only/candidate.cpp",
+      "bytes": 8,
+      "sha256": "1e252cdd98c19550b16d0221ded3805f761b14e94c0b725cfa13d885228854ea"
+    },
+    {
+      "path": "arma-only/candidate.fsm",
+      "bytes": 8,
+      "sha256": "670eced1465caa03f7c01fc99c50e21704f8a6c9d3b740104b06a1ac00451b5c"
+    },
+    {
+      "path": "arma-only/candidate.sqf",
+      "bytes": 8,
+      "sha256": "1bf8b6180b4a46ce1ad0b984f53eba731007a54c74ae8c6a6da15c9f2d23408a"
+    },
+    {
+      "path": "arma-only/candidate.sqfc",
+      "bytes": 9,
+      "sha256": "3c34ae305d6a5f195ee9713e3dc3c6ca58be86d128926e9a69a30aac0a6976aa"
+    },
+    {
+      "path": "arma-only/candidate.sqm",
+      "bytes": 8,
+      "sha256": "0e58706105467dfe3a6960a406f045cde7aafb467b581c378e517bfbe1c06874"
+    },
+    {
+      "path": "arma-only/candidate.sqs",
+      "bytes": 8,
+      "sha256": "9c78dbb6274fc052e07cd60c3310c723e7047752bb8b6f62ce7056f7b51b7c79"
+    },
+    {
+      "path": "arma/mission.fsm",
+      "bytes": 3,
+      "sha256": "d5650201f079c68a1f0849dab4530c6842f583ff5f9b18cdecc965340047b188"
+    },
+    {
+      "path": "arma/mission.sqf",
+      "bytes": 18,
+      "sha256": "2c345f0ad95ac108a21345c9b5ad13ec117fda2b7c0fe9f3ddf9b2e039fb8f71"
+    },
+    {
+      "path": "arma/mission.sqm",
+      "bytes": 11,
+      "sha256": "e49e109ce972574b06bbac2fa993e00693f7e72f983ab0653825ea4773667997"
+    },
+    {
+      "path": "arma/mission.sqs",
+      "bytes": 13,
+      "sha256": "66ae1f0087777799a257b548487c51f73cd579c791f8f6c6e28700d593cd5e79"
+    },
+    {
+      "path": "config/BIS_AddonInfo.hpp",
+      "bytes": 68,
+      "sha256": "d5758acb0008d8028fb71c42981ae4a99b6657a225dd0801c053d080b095bd4e"
+    },
+    {
+      "path": "config/config.cpp",
+      "bytes": 52,
+      "sha256": "bbcf75bd8cef0b802ce8ee890c5b55fcb3d2aa6b94f6ab905b91f7409fd3cf02"
+    },
+    {
+      "path": "dayz/briefing.bikb",
+      "bytes": 18,
+      "sha256": "a4d7b3c22eec9103dfb1ba6bc569c35e8e65b08eebc2c07d79ab75c19979faed"
+    },
+    {
+      "path": "dayz/mission.c",
+      "bytes": 23,
+      "sha256": "3221f03eb59ca258c6ba432a20716bf23483ec266f7a2ac5e8e3dbbe3df7f72d"
+    },
+    {
+      "path": "dayz/mission.ext",
+      "bytes": 13,
+      "sha256": "acb4de8145c098bc3b189c5c82ce68684e3d96da0fb5cbcef0443a2b50fa0476"
+    },
+    {
+      "path": "dayz/script.inc",
+      "bytes": 16,
+      "sha256": "8e24efd49caf8b5841715de9ba0d0d44fe1f8855b5edb1fbf67f5de63371aa00"
+    },
+    {
+      "path": "dayz/settings.cfg",
+      "bytes": 20,
+      "sha256": "f4efde67065d910a5da85a1f822a0f5b35c15b2a0425690d636fae7c6d7240bf"
+    },
+    {
+      "path": "dayz/settings.h",
+      "bytes": 11,
+      "sha256": "a2ad0e1ff85e28cc0a2e5492a1f1f537585a96d4a90f1a497887dcd06ef1492f"
+    },
+    {
+      "path": "dayz/settings.hpp",
+      "bytes": 18,
+      "sha256": "6f2db97f44cb29af6b5de07213c3dfcf5955dbb866ed480fd526c78db1ef71e7"
+    },
+    {
+      "path": "edges/chunk-4095.bin",
+      "bytes": 4095,
+      "sha256": "e22f185103f5d75f22898e979206334d51aa47b9a01b6d835df0ec9000aac2e5"
+    },
+    {
+      "path": "edges/chunk-4096.bin",
+      "bytes": 4096,
+      "sha256": "d41d438c379110c7f7b2c561b1f04f26c1b4549110791f8e022f48974280c13e"
+    },
+    {
+      "path": "edges/chunk-4097.bin",
+      "bytes": 4097,
+      "sha256": "bb37fb3430fb3bc003f70512ee0189aec84b029b221885c8f16280d1b935483e"
+    },
+    {
+      "path": "edges/edge-15.c",
+      "bytes": 15,
+      "sha256": "e27a7686b8028cfee7b57d954c3abccfb2a701968925f52bbd482e77be5de0bb"
+    },
+    {
+      "path": "edges/edge-16.c",
+      "bytes": 16,
+      "sha256": "7a51d064a1a216a692f753fcdab276e4ff201a01d8b66f56d50d4d719fd0dc87"
+    },
+    {
+      "path": "edges/edge-17.c",
+      "bytes": 17,
+      "sha256": "97f40b8ae3e4d3118bb4afb623d3e768f04d9bc2f913bd64296ebcd53386c1ac"
+    },
+    {
+      "path": "edges/empty.bin",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "ordinary/readme.txt",
+      "bytes": 14,
+      "sha256": "99b2f51b5b653a94d7bb1b0d069192a6ff6f1089ab696b64d00581440cb8e31f"
+    },
+    {
+      "path": "v2-excluded/asset.anm",
+      "bytes": 1,
+      "sha256": "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a"
+    },
+    {
+      "path": "v2-excluded/asset.edds",
+      "bytes": 1,
+      "sha256": "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a"
+    },
+    {
+      "path": "v2-excluded/asset.emat",
+      "bytes": 1,
+      "sha256": "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a"
+    },
+    {
+      "path": "v2-excluded/asset.fxy",
+      "bytes": 1,
+      "sha256": "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a"
+    },
+    {
+      "path": "v2-excluded/asset.jpg",
+      "bytes": 1,
+      "sha256": "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a"
+    },
+    {
+      "path": "v2-excluded/asset.lip",
+      "bytes": 1,
+      "sha256": "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a"
+    },
+    {
+      "path": "v2-excluded/asset.nm",
+      "bytes": 1,
+      "sha256": "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a"
+    },
+    {
+      "path": "v2-excluded/asset.ogg",
+      "bytes": 1,
+      "sha256": "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a"
+    },
+    {
+      "path": "v2-excluded/asset.p3d",
+      "bytes": 1,
+      "sha256": "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a"
+    },
+    {
+      "path": "v2-excluded/asset.paa",
+      "bytes": 1,
+      "sha256": "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a"
+    },
+    {
+      "path": "v2-excluded/asset.pac",
+      "bytes": 1,
+      "sha256": "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a"
+    },
+    {
+      "path": "v2-excluded/asset.png",
+      "bytes": 1,
+      "sha256": "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a"
+    },
+    {
+      "path": "v2-excluded/asset.ptc",
+      "bytes": 1,
+      "sha256": "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a"
+    },
+    {
+      "path": "v2-excluded/asset.rtm",
+      "bytes": 1,
+      "sha256": "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a"
+    },
+    {
+      "path": "v2-excluded/asset.rvmat",
+      "bytes": 1,
+      "sha256": "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a"
+    },
+    {
+      "path": "v2-excluded/asset.tga",
+      "bytes": 1,
+      "sha256": "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a"
+    },
+    {
+      "path": "v2-excluded/asset.wrp",
+      "bytes": 1,
+      "sha256": "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a"
+    },
+    {
+      "path": "v2-excluded/asset.wss",
+      "bytes": 1,
+      "sha256": "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a"
+    },
+    {
+      "path": "v2-excluded/asset.xob",
+      "bytes": 1,
+      "sha256": "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a"
+    }
+  ]
+}
