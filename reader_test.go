@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 WoozyMasta
+// Source: github.com/woozymasta/pbo
+
 package pbo
 
 import (
@@ -16,7 +20,7 @@ import (
 func TestOpen_InvalidHeader(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "bad.pbo")
-	if err := os.WriteFile(path, []byte("not a pbo header\x00\x00\x00"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte("not a pbo header\x00\x00\x00"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -98,7 +102,9 @@ func TestReaderLimits_HeaderFieldsRespectDeclaredSize(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			header := make([]byte, headerSize)
 			binary.LittleEndian.PutUint32(header[1:5], uint32(MimeHeader))
-			raw := append(header, test.headerTail...)
+			raw := make([]byte, len(header)+len(test.headerTail))
+			copy(raw, header)
+			copy(raw[len(header):], test.headerTail)
 			declaredSize := int64(headerSize + test.declaredSize)
 			ra := &syntheticReaderAt{prefix: raw, size: int64(len(raw))}
 
@@ -231,7 +237,7 @@ func (r *syntheticReaderAt) ReadAt(p []byte, offset int64) (int, error) {
 func TestOpen_EmptyFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "empty.pbo")
-	if err := os.WriteFile(path, nil, 0o644); err != nil {
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -402,7 +408,7 @@ func TestReadHeaders_DoesNotRequireValidEntryTable(t *testing.T) {
 	t.Parallel()
 
 	path := filepath.Join(t.TempDir(), "headers-only.pbo")
-	raw := make([]byte, headerSize)
+	raw := make([]byte, headerSize, headerSize+1+5)
 	binary.LittleEndian.PutUint32(raw[1:5], uint32(MimeHeader))
 
 	// Header terminator.
@@ -871,7 +877,6 @@ func TestExtract_RejectsUnsafeEntryPaths(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -914,7 +919,6 @@ func TestExtract_SanitizesUnsafeEntryPaths(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -1103,7 +1107,9 @@ func TestPack_WritesZeroEntryOffsets(t *testing.T) {
 	off := int64(headerSize)
 
 	for {
-		key, n, err := readNullTerminated(f, fi.Size(), off, defaultMaxHeaderFieldBytes, ErrReaderLimitExceeded)
+		key, n, err := readNullTerminated(
+			f, fi.Size(), off, defaultMaxHeaderFieldBytes, ErrReaderLimitExceeded,
+		)
 		if err != nil {
 			t.Fatalf("read header key at %d: %v", off, err)
 		}
@@ -1113,7 +1119,9 @@ func TestPack_WritesZeroEntryOffsets(t *testing.T) {
 			break
 		}
 
-		_, n, err = readNullTerminated(f, fi.Size(), off, defaultMaxHeaderFieldBytes, ErrReaderLimitExceeded)
+		_, n, err = readNullTerminated(
+			f, fi.Size(), off, defaultMaxHeaderFieldBytes, ErrReaderLimitExceeded,
+		)
 		if err != nil {
 			t.Fatalf("read header value at %d: %v", off, err)
 		}
@@ -1122,7 +1130,9 @@ func TestPack_WritesZeroEntryOffsets(t *testing.T) {
 	}
 
 	for {
-		name, n, err := readNullTerminated(f, fi.Size(), off, maxNameLen, ErrReaderLimitExceeded)
+		name, n, err := readNullTerminated(
+			f, fi.Size(), off, maxNameLen, ErrReaderLimitExceeded,
+		)
 		if err != nil {
 			t.Fatalf("read entry name at %d: %v", off, err)
 		}
@@ -1224,7 +1234,7 @@ func createManualPBOWithJunkEntries(t *testing.T) string {
 		fields := make([]byte, 20)
 		binary.LittleEndian.PutUint32(fields[0:4], uint32(spec.mime))
 		binary.LittleEndian.PutUint32(fields[4:8], spec.originalSize)
-		binary.LittleEndian.PutUint32(fields[16:20], uint32(len(spec.data)))
+		binary.LittleEndian.PutUint32(fields[16:20], mustUint32ForTest(t, int64(len(spec.data))))
 		if _, err := f.Write(fields); err != nil {
 			_ = f.Close()
 			t.Fatalf("write fields: %v", err)
@@ -1287,13 +1297,21 @@ func createManualPBOWithAbsoluteOffsetsAndGaps(t *testing.T) (string, uint32, ui
 	raw = append(raw, table.Bytes()...)
 	dataStart := len(raw)
 
-	firstOffset := uint32(dataStart + 16)
-	secondOffset := firstOffset + uint32(len("hello")+7)
+	firstOffset := mustUint32ForTest(t, int64(dataStart+16))
+	secondOffset := firstOffset + mustUint32ForTest(t, int64(len("hello")+7))
 
-	binary.LittleEndian.PutUint32(raw[tableBase+fieldPosA+8:tableBase+fieldPosA+12], firstOffset)
-	binary.LittleEndian.PutUint32(raw[tableBase+fieldPosA+16:tableBase+fieldPosA+20], uint32(len("hello")))
-	binary.LittleEndian.PutUint32(raw[tableBase+fieldPosB+8:tableBase+fieldPosB+12], secondOffset)
-	binary.LittleEndian.PutUint32(raw[tableBase+fieldPosB+16:tableBase+fieldPosB+20], uint32(len("world")))
+	binary.LittleEndian.PutUint32(
+		raw[tableBase+fieldPosA+8:tableBase+fieldPosA+12], firstOffset,
+	)
+	binary.LittleEndian.PutUint32(
+		raw[tableBase+fieldPosA+16:tableBase+fieldPosA+20], mustUint32ForTest(t, int64(len("hello"))),
+	)
+	binary.LittleEndian.PutUint32(
+		raw[tableBase+fieldPosB+8:tableBase+fieldPosB+12], secondOffset,
+	)
+	binary.LittleEndian.PutUint32(
+		raw[tableBase+fieldPosB+16:tableBase+fieldPosB+20], mustUint32ForTest(t, int64(len("world"))),
+	)
 
 	regionLen := int(secondOffset) + len("world") - dataStart
 	region := make([]byte, regionLen)
@@ -1330,8 +1348,12 @@ func createManualPBOMalformedStoredOffset(t *testing.T) string {
 	tableBase := len(raw)
 	raw = append(raw, table.Bytes()...)
 
-	binary.LittleEndian.PutUint32(raw[tableBase+fieldPos+8:tableBase+fieldPos+12], 0xFFFFFFF0)
-	binary.LittleEndian.PutUint32(raw[tableBase+fieldPos+16:tableBase+fieldPos+20], uint32(len("hello")))
+	binary.LittleEndian.PutUint32(
+		raw[tableBase+fieldPos+8:tableBase+fieldPos+12], 0xFFFFFFF0,
+	)
+	binary.LittleEndian.PutUint32(
+		raw[tableBase+fieldPos+16:tableBase+fieldPos+20], mustUint32ForTest(t, int64(len("hello"))),
+	)
 	raw = append(raw, []byte("hello")...)
 
 	if err := os.WriteFile(path, raw, 0o600); err != nil {

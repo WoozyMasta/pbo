@@ -24,7 +24,7 @@ func FuzzNewReaderFromReaderAt(f *testing.F) {
 		f.Add(seed[:headerSize+1])
 	}
 
-	f.Fuzz(func(t *testing.T, data []byte) {
+	f.Fuzz(func(_ *testing.T, data []byte) {
 		r, err := NewReaderFromReaderAt(bytes.NewReader(data), int64(len(data)))
 		if err != nil {
 			return
@@ -40,7 +40,7 @@ func FuzzOpenEntry(f *testing.F) {
 	f.Add([]byte{})
 	f.Add(seed[:5])
 
-	f.Fuzz(func(t *testing.T, data []byte) {
+	f.Fuzz(func(_ *testing.T, data []byte) {
 		r, err := NewReaderFromReaderAt(bytes.NewReader(data), int64(len(data)))
 		if err != nil {
 			return

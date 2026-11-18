@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 WoozyMasta
+// Source: github.com/woozymasta/pbo
+
 package pbo
 
 import (
@@ -22,45 +26,65 @@ func createManualPBOWithEntryPath(t *testing.T, entryPath string, payload []byte
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	header := make([]byte, headerSize)
 	binary.LittleEndian.PutUint32(header[1:5], uint32(MimeHeader))
 	if _, err := f.Write(header); err != nil {
-		f.Close()
+		if closeErr := f.Close(); closeErr != nil {
+			t.Errorf("close after header write error: %v", closeErr)
+		}
 		t.Fatal(err)
 	}
 	if _, err := f.Write([]byte{0}); err != nil {
-		f.Close()
+		if closeErr := f.Close(); closeErr != nil {
+			t.Errorf("close after header terminator error: %v", closeErr)
+		}
 		t.Fatal(err)
 	}
 	if _, err := f.Write([]byte(entryPath + "\x00")); err != nil {
-		f.Close()
+		if closeErr := f.Close(); closeErr != nil {
+			t.Errorf("close after entry name error: %v", closeErr)
+		}
 		t.Fatal(err)
 	}
+
 	entryBuf := make([]byte, 20)
-	binary.LittleEndian.PutUint32(entryBuf[16:20], uint32(len(payload)))
+	binary.LittleEndian.PutUint32(entryBuf[16:20], mustUint32ForTest(t, int64(len(payload))))
 	if _, err := f.Write(entryBuf); err != nil {
-		f.Close()
+		if closeErr := f.Close(); closeErr != nil {
+			t.Errorf("close after entry fields error: %v", closeErr)
+		}
 		t.Fatal(err)
 	}
 	if _, err := f.Write([]byte{0}); err != nil {
-		f.Close()
+		if closeErr := f.Close(); closeErr != nil {
+			t.Errorf("close after entry terminator error: %v", closeErr)
+		}
 		t.Fatal(err)
 	}
 	if _, err := f.Write(make([]byte, 20)); err != nil {
-		f.Close()
+		if closeErr := f.Close(); closeErr != nil {
+			t.Errorf("close after sentinel error: %v", closeErr)
+		}
 		t.Fatal(err)
 	}
 	if _, err := f.Write(payload); err != nil {
-		f.Close()
+		if closeErr := f.Close(); closeErr != nil {
+			t.Errorf("close after payload write error: %v", closeErr)
+		}
 		t.Fatal(err)
 	}
 	if err := f.Sync(); err != nil {
-		f.Close()
+		if closeErr := f.Close(); closeErr != nil {
+			t.Errorf("close after sync error: %v", closeErr)
+		}
 		t.Fatal(err)
 	}
+
 	if err := f.Close(); err != nil {
 		t.Fatal(err)
 	}
+
 	return path
 }
 
@@ -80,6 +104,7 @@ func TestOpen_ManualPBO(t *testing.T) {
 	if entries[0].Path != "a.txt" || entries[0].DataSize != 5 {
 		t.Errorf("entry: path=%q dataSize=%d", entries[0].Path, entries[0].DataSize)
 	}
+
 	data, err := r.ReadEntry("a.txt")
 	if err != nil {
 		t.Fatal(err)

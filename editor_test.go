@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 WoozyMasta
+// Source: github.com/woozymasta/pbo
+
 package pbo
 
 import (
@@ -134,7 +138,7 @@ func TestEditorCommit_ReplaceMissingPathFailsAndRestoresSource(t *testing.T) {
 		t.Fatalf("expected ErrEntryNotFound, got %v", err)
 	}
 
-	got, err := readEntryFromFile(pboPath, "a.txt")
+	got, err := readEntryFromFile(pboPath)
 	if err != nil {
 		t.Fatalf("readEntryFromFile: %v", err)
 	}
@@ -179,7 +183,7 @@ func TestEditorCommit_InputOpenErrorLeavesSourceUntouched(t *testing.T) {
 		t.Fatal("Commit must fail")
 	}
 
-	got, readErr := readEntryFromFile(pboPath, "a.txt")
+	got, readErr := readEntryFromFile(pboPath)
 	if readErr != nil {
 		t.Fatalf("readEntryFromFile: %v", readErr)
 	}
@@ -274,7 +278,7 @@ func TestEditorCommit_BackupKeepPolicies(t *testing.T) {
 		replaceAndCommit("v1")
 		replaceAndCommit("v2")
 
-		currentBak, err := readEntryFromFile(pboPath+".bak", "a.txt")
+		currentBak, err := readEntryFromFile(pboPath + ".bak")
 		if err != nil {
 			t.Fatalf("read current bak: %v", err)
 		}
@@ -282,7 +286,7 @@ func TestEditorCommit_BackupKeepPolicies(t *testing.T) {
 			t.Fatalf("current bak payload=%q, want %q", currentBak, "v1")
 		}
 
-		previousBak, err := readEntryFromFile(pboPath+".bak.1", "a.txt")
+		previousBak, err := readEntryFromFile(pboPath + ".bak.1")
 		if err != nil {
 			t.Fatalf("read previous bak: %v", err)
 		}
@@ -568,7 +572,7 @@ func writeRawEditorArchive(t *testing.T, path string, headers []HeaderPair, entr
 		binary.LittleEndian.PutUint32(fields[0:4], uint32(entry.mime))
 		binary.LittleEndian.PutUint32(fields[4:8], entry.originalSize)
 		binary.LittleEndian.PutUint32(fields[12:16], entry.timestamp)
-		binary.LittleEndian.PutUint32(fields[16:20], uint32(len(entry.data)))
+		binary.LittleEndian.PutUint32(fields[16:20], mustUint32ForTest(t, int64(len(entry.data))))
 		archive.Write(fields[:])
 	}
 	archive.WriteByte(0)
@@ -618,14 +622,14 @@ func findEntry(entries []EntryInfo, path string) *EntryInfo {
 	return nil
 }
 
-func readEntryFromFile(path string, entryPath string) ([]byte, error) {
+func readEntryFromFile(path string) ([]byte, error) {
 	r, err := Open(path)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = r.Close() }()
 
-	return r.ReadEntry(entryPath)
+	return r.ReadEntry("a.txt")
 }
 
 func stringsEqualFold(left string, right string) bool {

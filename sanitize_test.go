@@ -485,7 +485,7 @@ func createManualPBOWithNamedEntries(t *testing.T, entries []manualEntry) string
 		}
 
 		fields := make([]byte, 20)
-		binary.LittleEndian.PutUint32(fields[16:20], uint32(len(e.data)))
+		binary.LittleEndian.PutUint32(fields[16:20], mustUint32ForTest(t, int64(len(e.data))))
 		if _, err := f.Write(fields); err != nil {
 			_ = f.Close()
 			t.Fatalf("write fields: %v", err)

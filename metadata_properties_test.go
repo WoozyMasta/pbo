@@ -200,6 +200,8 @@ func TestPackFile_RejectsInvalidWireFieldsBeforeTruncation(t *testing.T) {
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			path := filepath.Join(t.TempDir(), "existing.pbo")
 			const original = "keep existing bytes"
 			if err := os.WriteFile(path, []byte(original), 0o600); err != nil {

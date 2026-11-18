@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Copyright (c) 2026 Maxim Levchenko (WoozyMasta)
+// Copyright (c) 2026 WoozyMasta
 // Source: github.com/woozymasta/pbo
 
 package pbo
@@ -25,7 +25,6 @@ func TestNormalizePath(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -52,7 +51,6 @@ func TestNormalizePrefixHeader(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 

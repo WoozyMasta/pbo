@@ -122,7 +122,6 @@ func TestShouldUseInMemoryCompressPath(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -426,7 +425,9 @@ func TestCompressCandidate_FalseLowSizeHintFallsBackToRaw(t *testing.T) {
 	if !bytes.Equal(dst.data.Bytes(), payload) {
 		t.Fatal("raw fallback output differs from source")
 	}
-	if record.mime != MimeNil || record.dataSize != uint32(len(payload)) || record.originalSize != 0 {
+	if record.mime != MimeNil ||
+		record.dataSize != mustUint32ForTest(t, int64(len(payload))) ||
+		record.originalSize != 0 {
 		t.Fatalf("fallback metadata = %+v, want uncompressed entry", record)
 	}
 }
@@ -435,7 +436,7 @@ func TestCompressCandidate_FalseLowSizeHintFallsBackToRaw(t *testing.T) {
 func TestCompressCandidateBoundaries(t *testing.T) {
 	const maxCompressSize = 1024
 	incompressible := make([]byte, maxCompressSize)
-	rng := rand.New(rand.NewSource(42))
+	rng := rand.New(rand.NewSource(42)) //nolint:gosec // A fixed seed keeps test input reproducible.
 	if _, err := rng.Read(incompressible); err != nil {
 		t.Fatalf("generate incompressible input: %v", err)
 	}
@@ -469,7 +470,6 @@ func TestCompressCandidateBoundaries(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			opts := PackOptions{MinCompressSize: 1, MaxCompressSize: maxCompressSize}
 			opts.applyDefaults()
@@ -516,7 +516,7 @@ func TestCompressCandidateAcrossChunksRoundTripsDeterministically(t *testing.T) 
 	if err != nil {
 		t.Fatalf("writeCompressedCandidatePayload: %v", err)
 	}
-	if record.mime != MimeCompress || record.originalSize != uint32(len(payload)) {
+	if record.mime != MimeCompress || record.originalSize != mustUint32ForTest(t, int64(len(payload))) {
 		t.Fatalf("record = %+v, want compressed entry of %d bytes", record, len(payload))
 	}
 

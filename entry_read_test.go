@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 WoozyMasta
+// Source: github.com/woozymasta/pbo
 
 package pbo
 
@@ -43,14 +44,16 @@ func TestReadEntry_MatchesStreamingForRawCompressedAndEmpty(t *testing.T) {
 		t.Fatalf("PackFile: %v", err)
 	}
 
-	r, err := Open(path)
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
-	defer func() { _ = r.Close() }()
-
 	for _, name := range []string{"raw.bin", "compressed.bin", "empty.bin"} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			r, err := Open(path)
+			if err != nil {
+				t.Fatalf("Open: %v", err)
+			}
+			defer func() { _ = r.Close() }()
+
 			stream, err := r.OpenEntry(name)
 			if err != nil {
 				t.Fatalf("OpenEntry: %v", err)

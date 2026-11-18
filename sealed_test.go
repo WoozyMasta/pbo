@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 WoozyMasta
+// Source: github.com/woozymasta/pbo
+
 package pbo
 
 import (
@@ -138,7 +142,13 @@ func TestSealedTrailerDetection_NoTrailerZeroCandidate(t *testing.T) {
 	}
 	body := data[:len(data)-sealedTrailerSize]
 	body[len(body)-sealedTrailerSize] = 0
-	if err := os.WriteFile(path, body, 0o600); err != nil {
+	root, err := os.OpenRoot(filepath.Dir(path))
+	if err != nil {
+		t.Fatalf("open fixture directory: %v", err)
+	}
+	defer func() { _ = root.Close() }()
+
+	if err := root.WriteFile(filepath.Base(path), body, 0o600); err != nil {
 		t.Fatalf("write no-trailer fixture: %v", err)
 	}
 
@@ -208,10 +218,12 @@ func TestSealedTransformBatched_MatchesSegmentTransformAndRoundTrips(t *testing.
 		2*sealedIOBatchSize + 1,
 	} {
 		t.Run(fmt.Sprintf("size_%d", size), func(t *testing.T) {
+			t.Parallel()
+
 			original := make([]byte, size)
 			copy(original, base)
 			for i := len(base); i < len(original); i++ {
-				original[i] = byte(i * 31)
+				original[i] = original[i%len(base)]
 			}
 
 			want := append([]byte(nil), original...)
@@ -353,7 +365,7 @@ func TestSealedTransform_RandomBytesRoundTrip(t *testing.T) {
 	t.Parallel()
 
 	baseDir := t.TempDir()
-	rng := rand.New(rand.NewSource(42))
+	rng := rand.New(rand.NewSource(42)) //nolint:gosec // Deterministic test keys keep failures reproducible.
 	inputs := []Input{
 		{
 			Path: "scripts/main.c",
@@ -373,7 +385,7 @@ func TestSealedTransform_RandomBytesRoundTrip(t *testing.T) {
 		},
 	}
 
-	for i := 0; i < 64; i++ {
+	for i := range 64 {
 		pboPath := filepath.Join(baseDir, fmt.Sprintf("random-%d.pbo", i))
 		f, err := os.OpenFile(pboPath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o600)
 		if err != nil {

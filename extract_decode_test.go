@@ -37,8 +37,16 @@ func TestExtractChecksumFailureDoesNotExposeDecodedOutput(t *testing.T) {
 	packedPayload[len(packedPayload)-1] ^= 0x80
 
 	pboPath := createDecodeFixturePBO(t, []decodeFixtureEntry{
-		{name: "bad.bin", data: packedPayload, originalSize: uint32(len(decodedPayload)), mimeType: MimeCompress},
-		{name: "good.txt", data: []byte("valid")},
+		{
+			name:         "bad.bin",
+			data:         packedPayload,
+			originalSize: mustUint32ForTest(t, int64(len(decodedPayload))),
+			mimeType:     MimeCompress,
+		},
+		{
+			name: "good.txt",
+			data: []byte("valid"),
+		},
 	})
 	reader, err := Open(pboPath)
 	if err != nil {
@@ -152,9 +160,12 @@ func TestExtractSmallChecksumFailureDoesNotCreateOutput(t *testing.T) {
 	}
 
 	packedPayload[len(packedPayload)-1] ^= 0x80
-	pboPath := createDecodeFixturePBO(t, []decodeFixtureEntry{
-		{name: "bad-small.bin", data: packedPayload, originalSize: uint32(len(decodedPayload)), mimeType: MimeCompress},
-	})
+	pboPath := createDecodeFixturePBO(t, []decodeFixtureEntry{{
+		name:         "bad-small.bin",
+		data:         packedPayload,
+		originalSize: mustUint32ForTest(t, int64(len(decodedPayload))),
+		mimeType:     MimeCompress,
+	}})
 	reader, err := Open(pboPath)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
@@ -189,7 +200,7 @@ func TestExtractStagedCompressedCreateOnly(t *testing.T) {
 	pboPath := createDecodeFixturePBO(t, []decodeFixtureEntry{{
 		name:         "compressed.bin",
 		data:         packedPayload,
-		originalSize: uint32(len(decodedPayload)),
+		originalSize: mustUint32ForTest(t, int64(len(decodedPayload))),
 		mimeType:     MimeCompress,
 	}})
 	reader, err := Open(pboPath)
@@ -267,7 +278,7 @@ func createDecodeFixturePBO(t *testing.T, entries []decodeFixtureEntry) string {
 		var fields [20]byte
 		binary.LittleEndian.PutUint32(fields[0:4], uint32(entry.mimeType))
 		binary.LittleEndian.PutUint32(fields[4:8], entry.originalSize)
-		binary.LittleEndian.PutUint32(fields[16:20], uint32(len(entry.data)))
+		binary.LittleEndian.PutUint32(fields[16:20], mustUint32ForTest(t, int64(len(entry.data))))
 		if _, err := file.Write(fields[:]); err != nil {
 			_ = file.Close()
 			t.Fatalf("write entry fields: %v", err)

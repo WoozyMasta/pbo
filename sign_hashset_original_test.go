@@ -1,8 +1,12 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 WoozyMasta
+// Source: github.com/woozymasta/pbo
+
 package pbo
 
 import (
 	"bytes"
-	"crypto/sha1"
+	"crypto/sha1" //nolint:gosec // PBO trailer validation requires SHA-1.
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
@@ -41,7 +45,7 @@ type canonicalCorpusFile struct {
 type canonicalPBOArtifact struct {
 	ID              string              `json:"id"`
 	Path            string              `json:"path"`
-	PayloadManifest canonicalCorpusFile `json:"payload_manifest,omitempty"`
+	PayloadManifest canonicalCorpusFile `json:"payload_manifest,omitzero"`
 	Properties      map[string]string   `json:"properties"`
 	Bytes           int64               `json:"bytes"`
 	SHA256          string              `json:"sha256"`
@@ -185,6 +189,8 @@ func TestCanonicalCorpusIntegrity(t *testing.T) {
 
 // TestComputeHashSetMatchesOriginalSignatureVectors checks all canonical signer digests.
 func TestComputeHashSetMatchesOriginalSignatureVectors(t *testing.T) {
+	t.Parallel()
+
 	manifest := loadCanonicalCorpusManifest(t)
 
 	for _, signature := range manifest.Signatures {
@@ -404,7 +410,7 @@ func verifyCanonicalPBO(t *testing.T, data []byte, artifact canonicalPBOArtifact
 		t.Errorf("PBO %s trailer marker=%d, want %d", artifact.ID, marker, artifact.TrailerMarker)
 	}
 
-	computed := sha1.Sum(data[:payloadEnd])
+	computed := sha1.Sum(data[:payloadEnd]) //nolint:gosec // PBO trailer validation requires SHA-1.
 	stored := data[payloadEnd+1 : payloadEnd+21]
 	if got := hex.EncodeToString(stored); got != artifact.TrailerSHA1 {
 		t.Errorf("PBO %s stored SHA-1=%s, want %s", artifact.ID, got, artifact.TrailerSHA1)
@@ -470,7 +476,7 @@ func recoverCanonicalSignatureHashes(data []byte) (uint32, [3][20]byte, biPublic
 	}
 
 	keyBytes := int(bits / 8)
-	if blockSize != uint32(20+keyBytes) {
+	if int64(blockSize) != 20+int64(keyBytes) {
 		return 0, hashes, biPublicKey{}, errors.New("embedded public key block size mismatch")
 	}
 
@@ -531,7 +537,7 @@ func parseCanonicalPublicKey(data []byte) (biPublicKey, error) {
 	}
 
 	keyBytes := int(bits / 8)
-	if blockSize != uint32(20+keyBytes) {
+	if int64(blockSize) != 20+int64(keyBytes) {
 		return empty, errors.New("public key block size mismatch")
 	}
 

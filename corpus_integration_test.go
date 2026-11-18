@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 WoozyMasta
+// Source: github.com/woozymasta/pbo
+
 package pbo
 
 import (
@@ -233,8 +237,18 @@ func canonicalSourceInputs(t *testing.T, source canonicalSourceManifest) []Input
 func hashExtractedFiles(t *testing.T, root string) map[string]string {
 	t.Helper()
 
+	rootFS, err := os.OpenRoot(root)
+	if err != nil {
+		t.Fatalf("open extracted tree: %v", err)
+	}
+	defer func() {
+		if err := rootFS.Close(); err != nil {
+			t.Errorf("close extracted tree: %v", err)
+		}
+	}()
+
 	hashes := make(map[string]string)
-	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+	err = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -242,7 +256,12 @@ func hashExtractedFiles(t *testing.T, root string) map[string]string {
 			return nil
 		}
 
-		file, err := os.Open(path)
+		relative, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+
+		file, err := rootFS.Open(filepath.ToSlash(relative))
 		if err != nil {
 			return err
 		}
@@ -257,10 +276,6 @@ func hashExtractedFiles(t *testing.T, root string) map[string]string {
 			return closeErr
 		}
 
-		relative, err := filepath.Rel(root, path)
-		if err != nil {
-			return err
-		}
 		hashes[filepath.ToSlash(relative)] = hex.EncodeToString(digest.Sum(nil))
 		return nil
 	})

@@ -211,6 +211,8 @@ func TestAutomaticCompressionSizeBounds(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			opts := PackOptions{Compress: true, MinCompressSize: tt.min, MaxCompressSize: tt.max}
 			opts.applyDefaults()
 			selection, err := selectCompressionInput(opts, nil, Input{Path: tt.path, SizeHint: tt.size}, bytes.NewReader(tt.data))

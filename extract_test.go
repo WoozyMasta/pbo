@@ -17,6 +17,8 @@ import (
 )
 
 func TestExtract_RootContainsSymlinks(t *testing.T) {
+	t.Parallel()
+
 	testCases := []struct {
 		name       string
 		entryPath  string

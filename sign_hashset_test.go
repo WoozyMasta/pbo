@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 WoozyMasta
+// Source: github.com/woozymasta/pbo
+
 package pbo
 
 import (
@@ -201,6 +205,7 @@ func TestComputeSignHashMatchesOriginalPrefixVectors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode original hash1: %v", err)
 	}
+
 	entries := []EntryInfo{
 		{Path: "probe.c", DataSize: 5},
 		{Path: "asset.paa", DataSize: 7},
@@ -210,18 +215,18 @@ func TestComputeSignHashMatchesOriginalPrefixVectors(t *testing.T) {
 	fileHashArmaV3 := sha1.Sum([]byte("gnihton")) //nolint:gosec // Empty V3 filehash sentinel.
 	prefix := pboPrefixFromHeaders([]HeaderPair{{Key: PropertyPrefix, Value: `some\folder`}})
 
-	if got := fmt.Sprintf(
-		"%x", computeSignHash2(hash1, nameHash, prefix),
+	if got := hex.EncodeToString(
+		computeSignHash2(hash1, nameHash, prefix),
 	); got != "4169b4f387a5c05620aca336c921460ee8759be7" {
 		t.Fatalf("hash2=%s, want original signer hash2", got)
 	}
-	if got := fmt.Sprintf(
-		"%x", computeSignHash3(fileHashV2[:], nameHash, prefix),
+	if got := hex.EncodeToString(
+		computeSignHash3(fileHashV2[:], nameHash, prefix),
 	); got != "3e4611b08121364ece2895eec3c13aae1d3b3a7a" {
 		t.Fatalf("V2 hash3=%s, want original signer hash3", got)
 	}
-	if got := fmt.Sprintf(
-		"%x", computeSignHash3(fileHashArmaV3[:], nameHash, prefix),
+	if got := hex.EncodeToString(
+		computeSignHash3(fileHashArmaV3[:], nameHash, prefix),
 	); got != "f547a2079f8f9d5a4b4741499a24b1869fbbc967" {
 		t.Fatalf("Arma V3 hash3=%s, want original signer hash3", got)
 	}
@@ -308,7 +313,13 @@ func TestComputeHashSetNormalizesPrefixSeparators(t *testing.T) {
 	digest := sha1.Sum(data[:bodyEnd]) //nolint:gosec // Test mirrors PBO trailer hashing.
 	data[bodyEnd] = 0
 	copy(data[bodyEnd+1:], digest[:])
-	if err := os.WriteFile(path, data, 0o600); err != nil {
+	root, err := os.OpenRoot(filepath.Dir(path))
+	if err != nil {
+		t.Fatalf("OpenRoot: %v", err)
+	}
+	defer func() { _ = root.Close() }()
+
+	if err := root.WriteFile(filepath.Base(path), data, 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
@@ -446,7 +457,10 @@ func TestValidateSignHashArgsRequiresGameType(t *testing.T) {
 
 			for _, gameType := range []GameType{"", "unknown"} {
 				if err := validateSignHashArgs(version, gameType); !errors.Is(err, ErrUnsupportedGameType) {
-					t.Errorf("validateSignHashArgs(%d, %q) error=%v, want ErrUnsupportedGameType", version, gameType, err)
+					t.Errorf(
+						"validateSignHashArgs(%d, %q) error=%v, want ErrUnsupportedGameType",
+						version, gameType, err,
+					)
 				}
 			}
 
@@ -456,8 +470,12 @@ func TestValidateSignHashArgsRequiresGameType(t *testing.T) {
 		})
 	}
 
-	if err := validateSignHashArgs(SignVersion(1), GameTypeDayZ); !errors.Is(err, ErrUnsupportedSignVersion) {
-		t.Fatalf("validateSignHashArgs(1, dayz) error=%v, want ErrUnsupportedSignVersion", err)
+	if err := validateSignHashArgs(
+		SignVersion(1), GameTypeDayZ,
+	); !errors.Is(err, ErrUnsupportedSignVersion) {
+		t.Fatalf(
+			"validateSignHashArgs(1, dayz) error=%v, want ErrUnsupportedSignVersion", err,
+		)
 	}
 }
 
@@ -465,7 +483,9 @@ func TestValidateSignHashArgsRequiresGameType(t *testing.T) {
 func TestComputeSignFileHashFromReaderAtRequiresGameTypeForEmptyEntries(t *testing.T) {
 	t.Parallel()
 
-	_, err := computeSignFileHashFromReaderAt(bytes.NewReader(nil), nil, SignVersionV2, "")
+	_, err := computeSignFileHashFromReaderAt(
+		bytes.NewReader(nil), nil, SignVersionV2, "",
+	)
 	if !errors.Is(err, ErrUnsupportedGameType) {
 		t.Fatalf("error=%v, want ErrUnsupportedGameType", err)
 	}
@@ -483,7 +503,7 @@ func TestComputeSignFileHashEmptySentinels(t *testing.T) {
 			if version == SignVersionV3 {
 				payload = "gnihton"
 			}
-			want := sha1.Sum([]byte(payload))
+			want := sha1.Sum([]byte(payload)) //nolint:gosec // Empty-file hash sentinels are format-defined SHA-1 values.
 
 			for _, entries := range [][]EntryInfo{nil, {{Path: "empty.c", DataSize: 0}}} {
 				for _, gameType := range []GameType{GameTypeArma, GameTypeDayZ} {
@@ -641,7 +661,12 @@ func computePackedFileHashForTestUsingOrder(
 }
 
 // computeDecompressedFileHashForTest replicates the legacy incorrect filehash over decompressed payload.
-func computeDecompressedFileHashForTest(r *Reader, entries []EntryInfo, version SignVersion, gameType GameType) ([]byte, error) {
+func computeDecompressedFileHashForTest(
+	r *Reader,
+	entries []EntryInfo,
+	version SignVersion,
+	gameType GameType,
+) ([]byte, error) {
 	sorted := make([]EntryInfo, len(entries))
 	copy(sorted, entries)
 	sort.Slice(sorted, func(i, j int) bool {

@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 WoozyMasta
+// Source: github.com/woozymasta/pbo
+
 package pbo
 
 import (
@@ -58,6 +62,8 @@ func TestPackAndHash_ReturnsPreTrailerHashes(t *testing.T) {
 			if _, err := f.ReadAt(packed, 0); err != nil {
 				t.Fatalf("read packed file: %v", err)
 			}
+
+			//nolint:gosec // PackAndHash mirrors PBO signing.
 			if got := sha1.Sum(packed); !bytes.Equal(hsPack.Hash1[:], got[:]) {
 				t.Fatalf("PackAndHash hash1=%x, want pre-trailer hash %x", hsPack.Hash1, got)
 			}

@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 WoozyMasta
+// Source: github.com/woozymasta/pbo
+
 package pbo
 
 import (
@@ -40,8 +44,6 @@ func TestCompressMatcherMatch(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
-
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -134,9 +136,9 @@ func TestCompressLZSSStreamMatchesSlice(t *testing.T) {
 	t.Parallel()
 
 	random := make([]byte, 8192)
-	rng := rand.New(rand.NewSource(42))
-	for i := range random {
-		random[i] = byte(rng.Intn(256))
+	rng := rand.New(rand.NewSource(42)) //nolint:gosec // A fixed seed keeps test input reproducible.
+	if _, err := rng.Read(random); err != nil {
+		t.Fatalf("generate test input: %v", err)
 	}
 
 	testCases := []struct {
@@ -149,7 +151,6 @@ func TestCompressLZSSStreamMatchesSlice(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
