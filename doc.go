@@ -25,12 +25,12 @@ or [Reader.CopyEntryInfoTo] to read payloads without name lookup.
 
 Entries retain their raw archive paths, and duplicate paths remain in source order.
 Lookup normalizes separators, folds ASCII case, and selects the first matching entry.
-[Reader.EntriesWithOptions] creates a separate filtered
-or sanitized view without changing the reader's raw entries.
-[Reader.EntriesWithOptionsIndexed] also includes source indices
-and parent paths for callers that cache a view for repeated navigation.
-[Reader.EntriesView] and [Reader.RangeEntries]
-provide lower-allocation ways to enumerate entry metadata.
+[Reader.Entries] returns a copy of raw metadata.
+[Reader.EntriesView] and [Reader.RangeEntries] enumerate raw metadata
+without copying the full entry list.
+
+The `pbo/inspect` subpackage selects entries by metadata
+and builds optional display paths without changing raw entry identity.
 
 # Extraction
 

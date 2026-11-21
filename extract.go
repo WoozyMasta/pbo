@@ -58,7 +58,7 @@ func (r *Reader) Extract(ctx context.Context, dstDir string, opts ExtractOptions
 	}
 
 	if !opts.RawNames {
-		sanitizedEntries, sanitizeErr := sanitizeEntryInfoPaths(entries)
+		sanitizedEntries, sanitizeErr := SanitizeEntries(entries)
 		if sanitizeErr != nil {
 			return sanitizeErr
 		}

@@ -18,12 +18,20 @@ and this project adheres to [Semantic Versioning][].
 
 ### Added
 
-* Added original-tool PBO fixtures and signed V2/V3 hash vectors
+* Original-tool PBO fixtures and signed V2/V3 hash vectors
   for corpus integrity checks.
-* Added `Reader.EntriesWithOptionsIndexed` to build reusable derived views
-  with source entry indices and parent paths.
-* Added `Reader.TrailerStatus` for non-blocking trailer state inspection
+* `pbo/inspect` for metadata-based selection,
+  blank/comment and content filtering,
+  bounded compressed-entry scans with configurable per-entry limits,
+  statistics, and separate display-path views;
+  shared extraction-path validation and sanitation helpers.
+* `Reader.TrailerStatus` for non-blocking trailer state inspection
   without hashing the archive.
+
+### Removed
+
+* `EntryViewOptions`, `EntryViewEntry` and `Reader.EntriesWithOptions*`;
+  replaced by selection and display views in `pbo/inspect`.
 
 ### Changed
 

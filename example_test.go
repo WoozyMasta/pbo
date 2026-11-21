@@ -5,7 +5,6 @@
 package pbo_test
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -14,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/woozymasta/pbo"
+	"github.com/woozymasta/pbo/inspect"
 )
 
 func exampleInput(path, content string) pbo.Input {
@@ -108,7 +108,7 @@ func ExampleListEntries() {
 	// scripts\main.c
 }
 
-func ExampleReader_EntriesWithOptions() {
+func ExampleSelect() {
 	path, cleanup, err := exampleArchive()
 	if err != nil {
 		fmt.Println(err)
@@ -123,17 +123,22 @@ func ExampleReader_EntriesWithOptions() {
 	}
 	defer func() { _ = r.Close() }()
 
-	entries, err := r.EntriesWithOptions(pbo.EntryViewOptions{
-		PathPrefix:    "data",
-		SanitizeNames: true,
+	selection, err := inspect.Select(context.Background(), r, inspect.Options{
+		PathPrefix: "data",
 	})
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
 
-	for _, entry := range entries {
-		stream, err := r.OpenEntryInfo(entry)
+	view, err := inspect.View(selection, inspect.ViewOptions{FilesystemSafe: true})
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	for _, entry := range view {
+		stream, err := r.OpenEntryInfo(entry.Raw)
 		if err != nil {
 			fmt.Println(err)
 			return
@@ -144,7 +149,7 @@ func ExampleReader_EntriesWithOptions() {
 			fmt.Println(err)
 			return
 		}
-		fmt.Println(entry.Path)
+		fmt.Println(entry.DisplayPath)
 		fmt.Println(string(data))
 	}
 
@@ -153,7 +158,7 @@ func ExampleReader_EntriesWithOptions() {
 	// payload
 }
 
-func ExampleReader_EntriesWithOptionsIndexed() {
+func ExampleSelection_Entries_emptySafeForExtract() {
 	path, cleanup, err := exampleArchive()
 	if err != nil {
 		fmt.Println(err)
@@ -168,29 +173,33 @@ func ExampleReader_EntriesWithOptionsIndexed() {
 	}
 	defer func() { _ = r.Close() }()
 
-	view, err := r.EntriesWithOptionsIndexed(pbo.EntryViewOptions{
-		PathPrefix:    "data",
-		SanitizeNames: true,
+	selection, err := inspect.Select(context.Background(), r, inspect.Options{
+		PathPrefix: "missing",
 	})
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
 
-	for _, item := range view {
-		fmt.Printf("source=%d parent=%s path=%s\n", item.SourceIndex, item.ParentPath, item.Entry.Path)
-		var payload bytes.Buffer
-		if _, err := r.CopyEntryInfoTo(item.Entry, &payload, nil); err != nil {
-			fmt.Println(err)
-			return
-		}
+	entries := selection.Entries()
+	destination, err := os.MkdirTemp("", "pbo-empty-selection-example-")
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer func() { _ = os.RemoveAll(destination) }()
 
-		fmt.Println(payload.String())
+	if err := r.Extract(context.Background(), destination, pbo.ExtractOptions{
+		Entries: entries,
+	}); err != nil {
+		fmt.Println(err)
+		return
 	}
 
+	fmt.Printf("nil=%t count=%d\n", entries == nil, len(entries))
+
 	// Output:
-	// source=1 parent=data path=data/a_b.txt
-	// payload
+	// nil=false count=0
 }
 
 func ExampleReader_TrailerStatus() {
@@ -235,6 +244,7 @@ func ExampleReader_Extract() {
 		return
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
+
 	if err := r.Extract(context.Background(), dir, pbo.ExtractOptions{MaxWorkers: 2}); err != nil {
 		fmt.Println(err)
 		return

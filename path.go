@@ -39,6 +39,12 @@ func NormalizePrefixHeader(raw string) string {
 	return strings.ReplaceAll(normalized, "/", `\`)
 }
 
+// ValidateExtractPath reports whether an entry path is valid for extraction.
+func ValidateExtractPath(entryPath string) error {
+	_, err := normalizeExtractEntryPath(entryPath)
+	return err
+}
+
 // normalizePathForMatching normalizes user/input paths for matcher use.
 func normalizePathForMatching(path string) string {
 	path = strings.TrimSpace(path)

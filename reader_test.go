@@ -361,7 +361,7 @@ func TestResolveEntryOffsetsStoredModesDoNotMixOffsetInterpretations(t *testing.
 	}
 }
 
-func TestOpenWithOptions_JunkFilter(t *testing.T) {
+func TestOpen_PreservesRawIndexAndPayload(t *testing.T) {
 	t.Parallel()
 
 	path := createManualPBOWithJunkEntries(t)
@@ -374,17 +374,6 @@ func TestOpenWithOptions_JunkFilter(t *testing.T) {
 
 	if len(rDefault.Entries()) != 5 {
 		t.Fatalf("default entries=%d, want 5", len(rDefault.Entries()))
-	}
-
-	entries, err := rDefault.EntriesWithOptions(EntryViewOptions{FilterJunk: true})
-	if err != nil {
-		t.Fatalf("EntriesWithOptions junk filter: %v", err)
-	}
-	if len(entries) != 2 {
-		t.Fatalf("filtered entries=%d, want 2", len(entries))
-	}
-	if entries[0].Path != "keep1.txt" || entries[1].Path != "keep2.txt" {
-		t.Fatalf("filtered paths = [%q, %q], want [keep1.txt, keep2.txt]", entries[0].Path, entries[1].Path)
 	}
 
 	got, err := rDefault.ReadEntry("keep2.txt")

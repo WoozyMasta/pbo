@@ -109,6 +109,12 @@ func SanitizePath(pathValue string) (string, error) {
 	return sanitized, nil
 }
 
+// SanitizeEntries returns filesystem-safe copies with deterministic collision
+// resolution in input order.
+func SanitizeEntries(entries []EntryInfo) ([]EntryInfo, error) {
+	return sanitizeEntryInfoPaths(entries)
+}
+
 // sanitizeEntryInfoPaths rewrites entry paths to deterministic filesystem-safe names.
 func sanitizeEntryInfoPaths(entries []EntryInfo) ([]EntryInfo, error) {
 	out := make([]EntryInfo, len(entries))
@@ -127,65 +133,6 @@ func sanitizeEntryInfoPaths(entries []EntryInfo) ([]EntryInfo, error) {
 		}
 
 		if _, err := normalizeExtractEntryPath(sanitized); err != nil {
-			return nil, fmt.Errorf("sanitize path %s: %w", entries[i].Path, err)
-		}
-
-		out[i] = entries[i]
-		out[i].Path = sanitized
-	}
-
-	return out, nil
-}
-
-// sanitizeEntryInfoPathsWithPrefix builds a sanitized view while filtering the same sanitized names.
-func sanitizeEntryInfoPathsWithPrefix(entries []EntryInfo, prefix string) ([]EntryInfo, error) {
-	prefixWithSlash := prefix + "/"
-	out := make([]EntryInfo, 0)
-	var used map[string]struct{}
-	var nextSuffix map[string]int
-
-	for i := range entries {
-		sanitized, err := sanitizeEntryInfoPath(entries[i].Path, sanitizePathSegment)
-		if err != nil {
-			return nil, fmt.Errorf("sanitize path %s: %w", entries[i].Path, err)
-		}
-		if sanitized != prefix && !strings.HasPrefix(sanitized, prefixWithSlash) {
-			continue
-		}
-
-		if used == nil {
-			used = make(map[string]struct{})
-			nextSuffix = make(map[string]int)
-		}
-		sanitized, err = makeSanitizedPathUnique(sanitized, used, nextSuffix)
-		if err != nil {
-			return nil, fmt.Errorf("sanitize path %s: %w", entries[i].Path, err)
-		}
-		if _, err := normalizeExtractEntryPath(sanitized); err != nil {
-			return nil, fmt.Errorf("sanitize path %s: %w", entries[i].Path, err)
-		}
-
-		entry := entries[i]
-		entry.Path = sanitized
-		out = append(out, entry)
-	}
-
-	return out, nil
-}
-
-// sanitizeEntryInfoControlPaths rewrites control and format runes in entry paths.
-func sanitizeEntryInfoControlPaths(entries []EntryInfo) ([]EntryInfo, error) {
-	out := make([]EntryInfo, len(entries))
-	used := make(map[string]struct{}, len(entries))
-	nextSuffix := make(map[string]int, len(entries))
-
-	for i := range entries {
-		sanitized, err := sanitizeEntryInfoPath(entries[i].Path, sanitizeControlCharPathSegment)
-		if err != nil {
-			return nil, fmt.Errorf("sanitize path %s: %w", entries[i].Path, err)
-		}
-		sanitized, err = makeSanitizedPathUnique(sanitized, used, nextSuffix)
-		if err != nil {
 			return nil, fmt.Errorf("sanitize path %s: %w", entries[i].Path, err)
 		}
 
@@ -317,31 +264,6 @@ func isAlreadySafeASCIIPathSegment(segment string) bool {
 	}
 
 	return true
-}
-
-// sanitizeControlCharPathSegment sanitizes one path segment for safe text output.
-func sanitizeControlCharPathSegment(segment string) (string, error) {
-	if segment == ".." {
-		return "_", nil
-	}
-
-	var b strings.Builder
-	b.Grow(len(segment))
-	for _, r := range segment {
-		if isUnsafeControlCharRune(r) {
-			b.WriteRune('_')
-			continue
-		}
-
-		b.WriteRune(r)
-	}
-
-	sanitized := b.String()
-	if sanitized == "" {
-		return "_", nil
-	}
-
-	return sanitized, nil
 }
 
 // isUnsafeControlCharRune reports whether rune is unsafe for textual output and should be replaced.

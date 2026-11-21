@@ -13,7 +13,6 @@ import (
 	"io"
 	"math"
 	"os"
-	"path"
 	"sync"
 	"sync/atomic"
 )
@@ -174,53 +173,6 @@ func (r *Reader) RangeEntries(fn func(EntryInfo) bool) {
 			return
 		}
 	}
-}
-
-// EntriesWithOptions returns a copy of a derived view over all raw archive entries.
-// Entry metadata keeps resolved payload offsets, so entries can be passed to OpenEntryInfo.
-func (r *Reader) EntriesWithOptions(opts EntryViewOptions) ([]EntryInfo, error) {
-	if r == nil {
-		return nil, ErrNilReader
-	}
-
-	entries, err := applyEntryViewOptions(r.entries, opts)
-	if err != nil {
-		return nil, err
-	}
-
-	result := make([]EntryInfo, len(entries))
-	copy(result, entries)
-	return result, nil
-}
-
-// EntriesWithOptionsIndexed returns a derived entry view with raw source indices.
-// Cache the result when a caller needs to reuse sanitized paths for navigation.
-func (r *Reader) EntriesWithOptionsIndexed(opts EntryViewOptions) ([]EntryViewEntry, error) {
-	if r == nil {
-		return nil, ErrNilReader
-	}
-
-	sourceIndices := make([]int, 0, len(r.entries))
-	entries, err := applyEntryViewOptionsWithSourceIndices(r.entries, opts, &sourceIndices)
-	if err != nil {
-		return nil, err
-	}
-
-	result := make([]EntryViewEntry, len(entries))
-	for i := range entries {
-		parentPath := path.Dir(NormalizePath(entries[i].Path))
-		if parentPath == "." {
-			parentPath = ""
-		}
-
-		result[i] = EntryViewEntry{
-			SourceIndex: sourceIndices[i],
-			Entry:       entries[i],
-			ParentPath:  parentPath,
-		}
-	}
-
-	return result, nil
 }
 
 // Headers returns parsed headers in original order.
