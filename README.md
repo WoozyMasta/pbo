@@ -29,9 +29,13 @@ go get github.com/woozymasta/pbo@latest
 * Edit archives while preserving untouched entries and their stored data.
 * Extract entries with sanitized paths and destination-root confinement.
 
+> [!NOTE]
+> For PBO signatures and signing keys, see the [bisign][] package.
+
 The library also supports duplicate entry paths, and bounded metadata parsing.
 See the package documentation for the exact behavior and options.
 
 <!-- links -->
 
 [pbo]: https://pkg.go.dev/github.com/woozymasta/pbo
+[bisign]: https://pkg.go.dev/github.com/woozymasta/bisign
