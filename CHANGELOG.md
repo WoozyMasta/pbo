@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning][].
 ### Removed
 -->
 
-## Unreleased
+## [0.5.0][] - 2026-11-22
 
 ### Added
 
@@ -53,6 +53,8 @@ and this project adheres to [Semantic Versioning][].
   extraction leaves destination files untouched when decoding fails.
 * Stored-offset retries no longer mix partial interpretations;
   extraction rejects colliding output paths before writing.
+
+[0.5.0]: https://github.com/WoozyMasta/pbo/compare/v0.4.0...v0.5.0
 
 ## [0.4.0][] - 2026-10-19
 
