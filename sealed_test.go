@@ -12,6 +12,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -71,6 +72,9 @@ func TestPackFileAndOpenWithOptions_SealedKeyRoundTrip(t *testing.T) {
 	if bytes.Equal(plainData, sealedData) {
 		t.Fatal("sealed output must differ from plain output")
 	}
+	if sealedData[len(sealedData)-sealedTrailerSize] == 0 {
+		t.Fatal("sealed transform did not transform the PBO trailer marker")
+	}
 
 	r, err := OpenWithOptions(sealedPath, ReaderOptions{SealedKey: &key})
 	if err != nil {
@@ -85,6 +89,12 @@ func TestPackFileAndOpenWithOptions_SealedKeyRoundTrip(t *testing.T) {
 	trailer, ok := r.SHA1Trailer()
 	if !ok {
 		t.Fatal("SHA1Trailer() did not verify the sealed archive trailer")
+	}
+
+	var storedDigest [sealedDigestSize]byte
+	copy(storedDigest[:], sealedData[len(sealedData)-sealedDigestSize:])
+	if trailer != storedDigest {
+		t.Fatalf("SHA1 trailer = %x, want unchanged digest %x", trailer, storedDigest)
 	}
 	hashSet, err := computeHashSetFromReader(r, SignVersionV2, GameTypeArma)
 	if err != nil {
@@ -121,6 +131,199 @@ func TestPackFileAndOpenWithOptions_SealedKeyRoundTrip(t *testing.T) {
 	_ = forced.Close()
 }
 
+func TestPackAndHashWithSealedKeyRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	key := sealedTestKey()
+	inputs := []Input{{
+		Path: "payload.bin",
+		Open: func() (io.ReadCloser, error) {
+			return io.NopCloser(bytes.NewReader([]byte("payload"))), nil
+		},
+		SizeHint: int64(len("payload")),
+	}}
+	options := PackOptions{SealedKey: &key}
+
+	t.Run("PackAndHash", func(t *testing.T) {
+		t.Parallel()
+
+		path := filepath.Join(t.TempDir(), "archive.pbo")
+		file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o600)
+		if err != nil {
+			t.Fatalf("OpenFile: %v", err)
+		}
+		if _, _, err := PackAndHash(
+			context.Background(), file, inputs, options, SignVersionV3, GameTypeDayZ,
+		); err != nil {
+			_ = file.Close()
+			t.Fatalf("PackAndHash: %v", err)
+		}
+		if err := file.Close(); err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+
+		reader, err := OpenWithOptions(path, ReaderOptions{SealedKey: &key})
+		if err != nil {
+			t.Fatalf("OpenWithOptions: %v", err)
+		}
+		defer func() { _ = reader.Close() }()
+
+		got, err := reader.ReadEntry("payload.bin")
+		if err != nil {
+			t.Fatalf("ReadEntry: %v", err)
+		}
+		if string(got) != "payload" {
+			t.Fatalf("payload = %q, want payload", got)
+		}
+	})
+
+	t.Run("PackAndHashFile", func(t *testing.T) {
+		t.Parallel()
+
+		path := filepath.Join(t.TempDir(), "archive.pbo")
+		_, hashes, err := PackAndHashFile(
+			context.Background(), path, inputs, options, SignVersionV3, GameTypeDayZ,
+		)
+		if err != nil {
+			t.Fatalf("PackAndHashFile: %v", err)
+		}
+
+		reader, err := OpenWithOptions(path, ReaderOptions{SealedKey: &key})
+		if err != nil {
+			t.Fatalf("OpenWithOptions: %v", err)
+		}
+		defer func() { _ = reader.Close() }()
+
+		got, err := reader.ReadEntry("payload.bin")
+		if err != nil {
+			t.Fatalf("ReadEntry: %v", err)
+		}
+		if string(got) != "payload" {
+			t.Fatalf("payload = %q, want payload", got)
+		}
+
+		trailer, ok := reader.SHA1Trailer()
+		if !ok {
+			t.Fatal("SHA1Trailer() did not verify")
+		}
+		if hashes.Hash1 != trailer {
+			t.Fatalf("hash1 = %x, want verified trailer %x", hashes.Hash1, trailer)
+		}
+	})
+}
+
+func TestSealedTransform_LargeHeaderCrossesBlockBoundary(t *testing.T) {
+	t.Parallel()
+
+	key := sealedTestKey()
+	path := filepath.Join(t.TempDir(), "large-header.pbo")
+	plainPath := filepath.Join(t.TempDir(), "large-header-plain.pbo")
+	packPath := filepath.Join(t.TempDir(), "large-header-pack.pbo")
+	plainPackPath := filepath.Join(t.TempDir(), "large-header-pack-plain.pbo")
+	inputs := []Input{{
+		Path: "payload.bin",
+		Open: func() (io.ReadCloser, error) {
+			return io.NopCloser(bytes.NewReader([]byte("payload"))), nil
+		},
+		SizeHint: int64(len("payload")),
+	}}
+	options := PackOptions{
+		Headers: []HeaderPair{{
+			Key:   "metadata",
+			Value: strings.Repeat("x", sealedBlockSize+128),
+		}},
+	}
+	if _, err := PackFile(context.Background(), plainPath, inputs, options); err != nil {
+		t.Fatalf("PackFile plain: %v", err)
+	}
+
+	options.SealedKey = &key
+	if _, err := PackFile(context.Background(), path, inputs, options); err != nil {
+		t.Fatalf("PackFile sealed: %v", err)
+	}
+
+	plainData, err := os.ReadFile(plainPath)
+	if err != nil {
+		t.Fatalf("ReadFile plain: %v", err)
+	}
+	if err := applySealedTransformBySegments(plainData, &key); err != nil {
+		t.Fatalf("reference transform: %v", err)
+	}
+
+	sealedData, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile sealed: %v", err)
+	}
+	if !bytes.Equal(sealedData, plainData) {
+		t.Fatal("sealed output differs from block-aligned reference transform")
+	}
+
+	plainPackFile, err := os.OpenFile(plainPackPath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		t.Fatalf("OpenFile plain Pack output: %v", err)
+	}
+	if _, err := Pack(
+		context.Background(), plainPackFile, inputs, PackOptions{Headers: options.Headers},
+	); err != nil {
+		_ = plainPackFile.Close()
+		t.Fatalf("Pack plain: %v", err)
+	}
+	if err := plainPackFile.Close(); err != nil {
+		t.Fatalf("Close plain Pack output: %v", err)
+	}
+
+	plainPackData, err := os.ReadFile(plainPackPath)
+	if err != nil {
+		t.Fatalf("ReadFile plain Pack output: %v", err)
+	}
+	if err := applySealedTransformBySegments(plainPackData, &key); err != nil {
+		t.Fatalf("reference transform plain Pack output: %v", err)
+	}
+
+	packFile, err := os.OpenFile(packPath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		t.Fatalf("OpenFile Pack output: %v", err)
+	}
+	if _, err := Pack(context.Background(), packFile, inputs, options); err != nil {
+		_ = packFile.Close()
+		t.Fatalf("Pack sealed: %v", err)
+	}
+	if err := packFile.Close(); err != nil {
+		t.Fatalf("Close Pack output: %v", err)
+	}
+
+	packData, err := os.ReadFile(packPath)
+	if err != nil {
+		t.Fatalf("ReadFile Pack output: %v", err)
+	}
+	if !bytes.Equal(packData, plainPackData) {
+		t.Fatal("Pack output differs from block-aligned reference transform")
+	}
+
+	reader, err := OpenWithOptions(path, ReaderOptions{SealedKey: &key})
+	if err != nil {
+		t.Fatalf("OpenWithOptions: %v", err)
+	}
+	defer func() { _ = reader.Close() }()
+
+	got, err := reader.ReadEntry("payload.bin")
+	if err != nil {
+		t.Fatalf("ReadEntry: %v", err)
+	}
+	if string(got) != "payload" {
+		t.Fatalf("payload = %q, want payload", got)
+	}
+	if _, ok := reader.SHA1Trailer(); !ok {
+		t.Fatal("SHA1Trailer() did not verify large-header archive")
+	}
+	if _, err := ReadHeadersWithOptions(path, ReaderOptions{
+		SealedKey:   &key,
+		TrailerMode: TrailerModePresent,
+	}); err != nil {
+		t.Fatalf("ReadHeadersWithOptions: %v", err)
+	}
+}
+
 func TestSealedTrailerDetection_NoTrailerZeroCandidate(t *testing.T) {
 	t.Parallel()
 
@@ -132,7 +335,7 @@ func TestSealedTrailerDetection_NoTrailerZeroCandidate(t *testing.T) {
 		Open: func() (io.ReadCloser, error) {
 			return io.NopCloser(bytes.NewReader(payload)), nil
 		},
-	}}, PackOptions{SealedKey: &key}); err != nil {
+	}}, PackOptions{}); err != nil {
 		t.Fatalf("PackFile: %v", err)
 	}
 
@@ -150,6 +353,18 @@ func TestSealedTrailerDetection_NoTrailerZeroCandidate(t *testing.T) {
 
 	if err := root.WriteFile(filepath.Base(path), body, 0o600); err != nil {
 		t.Fatalf("write no-trailer fixture: %v", err)
+	}
+
+	file, err := os.OpenFile(path, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatalf("open fixture for sealed transform: %v", err)
+	}
+	if err := ToggleSealedInPlace(file, &key); err != nil {
+		_ = file.Close()
+		t.Fatalf("ToggleSealedInPlace: %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("close transformed fixture: %v", err)
 	}
 
 	r, err := OpenWithOptions(path, ReaderOptions{SealedKey: &key})
@@ -233,7 +448,7 @@ func TestSealedTransformBatched_MatchesSegmentTransformAndRoundTrips(t *testing.
 
 			got := append([]byte(nil), original...)
 			if err := applySealedTransformToReadWriteAt(
-				bytes.NewReader(original), testWriterAt{data: got}, int64(len(got)), &key, false,
+				bytes.NewReader(original), testWriterAt{data: got}, int64(len(got)), &key,
 			); err != nil {
 				t.Fatalf("batched transform: %v", err)
 			}
@@ -242,7 +457,7 @@ func TestSealedTransformBatched_MatchesSegmentTransformAndRoundTrips(t *testing.
 			}
 
 			if err := applySealedTransformToReadWriteAt(
-				bytes.NewReader(got), testWriterAt{data: got}, int64(len(got)), &key, false,
+				bytes.NewReader(got), testWriterAt{data: got}, int64(len(got)), &key,
 			); err != nil {
 				t.Fatalf("second batched transform: %v", err)
 			}
@@ -253,10 +468,10 @@ func TestSealedTransformBatched_MatchesSegmentTransformAndRoundTrips(t *testing.
 	}
 }
 
-// applySealedTransformBySegments preserves the pre-batching algorithm for byte-level comparison.
+// applySealedTransformBySegments provides a block-aligned reference transform for tests.
 func applySealedTransformBySegments(data []byte, keyValue *SealedKey) error {
 	key := parseSealedKey(keyValue)
-	layout, err := buildSealedLayoutWithOptions(bytes.NewReader(data), int64(len(data)), TrailerModeAbsent, ReaderLimits{})
+	layout, err := buildSealedLayout(bytes.NewReader(data), int64(len(data)), ReaderLimits{})
 	if err != nil {
 		return err
 	}
@@ -268,13 +483,13 @@ func applySealedTransformBySegments(data []byte, keyValue *SealedKey) error {
 		state.apply(segment)
 	}
 
-	firstEnd := minInt64(sealedBlockSize, layout.transformSize)
-	if layout.headerSkip < firstEnd {
-		transformSegment(layout.headerSkip, firstEnd, 0)
-	}
-	for segmentStart := int64(sealedBlockSize); segmentStart < layout.transformSize; segmentStart += sealedBlockSize {
-		segmentEnd := minInt64(segmentStart+sealedBlockSize, layout.transformSize)
-		streamPos, err := checkedInt64ToUint32(segmentStart)
+	for blockStart := int64(0); blockStart < layout.transformEnd; blockStart += sealedBlockSize {
+		segmentStart := maxInt64(blockStart, layout.headerSkip)
+		segmentEnd := minInt64(blockStart+sealedBlockSize, layout.transformEnd)
+		if segmentStart >= segmentEnd {
+			continue
+		}
+		streamPos, err := checkedInt64ToUint32(blockStart)
 		if err != nil {
 			return err
 		}

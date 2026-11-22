@@ -21,6 +21,8 @@ const (
 	sealedKeySize = 16
 	// sealedTrailerSize is size of optional SHA1 trailer (0x00 + sha1).
 	sealedTrailerSize = 21
+	// sealedDigestSize is the untransformed SHA1 digest at the end of an archive.
+	sealedDigestSize = 20
 )
 
 // sealedRC4State holds state for one transformed block.
@@ -45,9 +47,9 @@ type sealedKey struct {
 type sealedLayout struct {
 	// headerSkip is end offset of untransformed header+header-pairs area.
 	headerSkip int64
-	// transformSize is archive region size affected by transform (without trailer).
-	transformSize int64
-	// seed is transform seed derived from transformSize.
+	// transformEnd is the exclusive end of the transformed region.
+	transformEnd int64
+	// seed is derived from the complete on-disk archive size.
 	seed uint32
 }
 
@@ -62,7 +64,13 @@ type sealedReaderAt struct {
 }
 
 // prepareReaderAtWithSealedOptions wraps source reader with on-demand sealed decode when enabled.
-func prepareReaderAtWithSealedOptions(ra io.ReaderAt, size int64, sealedKeyValue *SealedKey, trailerMode TrailerMode, limits ReaderLimits) (io.ReaderAt, error) {
+func prepareReaderAtWithSealedOptions(
+	ra io.ReaderAt,
+	size int64,
+	sealedKeyValue *SealedKey,
+	trailerMode TrailerMode,
+	limits ReaderLimits,
+) (io.ReaderAt, error) {
 	if ra == nil {
 		return nil, ErrNilReader
 	}
@@ -76,7 +84,7 @@ func prepareReaderAtWithSealedOptions(ra io.ReaderAt, size int64, sealedKeyValue
 		return ra, nil
 	}
 
-	layout, err := buildSealedLayoutWithOptions(ra, size, trailerMode, limits)
+	layout, err := buildSealedLayout(ra, size, limits)
 	if err != nil {
 		return nil, err
 	}
@@ -100,7 +108,7 @@ func (s *sealedReaderAt) ReadAt(p []byte, off int64) (int, error) {
 	return n, err
 }
 
-// applySealedTransformToWriteSeeker applies in-place sealed transform for packed output.
+// applySealedTransformToWriteSeeker applies the sealed transform to packed output.
 func applySealedTransformToWriteSeeker(out io.WriteSeeker, sealedKeyValue *SealedKey) error {
 	if out == nil {
 		return ErrNilWriter
@@ -125,7 +133,7 @@ func applySealedTransformToWriteSeeker(out io.WriteSeeker, sealedKeyValue *Seale
 		return fmt.Errorf("seek output end for sealed transform: %w", err)
 	}
 
-	if err := applySealedTransformToReadWriteAt(ra, wa, size, sealedKeyValue, false); err != nil {
+	if err := applySealedTransformToReadWriteAt(ra, wa, size, sealedKeyValue); err != nil {
 		return err
 	}
 
@@ -136,10 +144,10 @@ func applySealedTransformToWriteSeeker(out io.WriteSeeker, sealedKeyValue *Seale
 	return nil
 }
 
-// ToggleSealedInPlace toggles sealed transform for an existing archive stream.
+// ToggleSealedInPlace toggles the sealed transform for an existing archive.
 //
-// This operation is symmetric: applying it twice with the same key restores
-// the original bytes.
+// The transform leaves the PBO header and final 20-byte digest unchanged.
+// Applying it twice with the same key restores the original bytes.
 func ToggleSealedInPlace(out io.ReadWriteSeeker, sealedKeyValue *SealedKey) error {
 	if out == nil {
 		return ErrNilWriter
@@ -160,7 +168,7 @@ func ToggleSealedInPlace(out io.ReadWriteSeeker, sealedKeyValue *SealedKey) erro
 		return fmt.Errorf("seek output end for sealed toggle: %w", err)
 	}
 
-	if err := applySealedTransformToReadWriteAt(ra, wa, size, sealedKeyValue, true); err != nil {
+	if err := applySealedTransformToReadWriteAt(ra, wa, size, sealedKeyValue); err != nil {
 		return err
 	}
 
@@ -177,7 +185,6 @@ func applySealedTransformToReadWriteAt(
 	wa io.WriterAt,
 	size int64,
 	sealedKeyValue *SealedKey,
-	detectTrailer bool,
 ) error {
 	key := parseSealedKey(sealedKeyValue)
 
@@ -185,26 +192,21 @@ func applySealedTransformToReadWriteAt(
 		return nil
 	}
 
-	trailerMode := TrailerModeAbsent
-	if detectTrailer {
-		trailerMode = TrailerModeAuto
-	}
-
-	layout, err := buildSealedLayoutWithOptions(ra, size, trailerMode, ReaderLimits{})
+	layout, err := buildSealedLayout(ra, size, ReaderLimits{})
 	if err != nil {
 		return err
 	}
 
-	bufferSize := minInt64(sealedIOBatchSize, layout.transformSize-layout.headerSkip)
+	bufferSize := minInt64(sealedIOBatchSize, layout.transformEnd-layout.headerSkip)
 	if bufferSize <= 0 {
 		return nil
 	}
 
 	buffer := make([]byte, int(bufferSize))
-	for batchStart := layout.headerSkip; batchStart < layout.transformSize; {
+	for batchStart := layout.headerSkip; batchStart < layout.transformEnd; {
 		batchEnd := minInt64(
 			((batchStart/sealedIOBatchSize)+1)*sealedIOBatchSize,
-			layout.transformSize,
+			layout.transformEnd,
 		)
 		batch := buffer[:int(batchEnd-batchStart)]
 		if err := readFullAt(ra, batch, batchStart); err != nil {
@@ -246,8 +248,8 @@ func parseSealedKey(value *SealedKey) sealedKey {
 	return key
 }
 
-// buildSealedLayoutWithOptions resolves transform geometry and optional trailer policy.
-func buildSealedLayoutWithOptions(ra io.ReaderAt, size int64, trailerMode TrailerMode, limits ReaderLimits) (sealedLayout, error) {
+// buildSealedLayout resolves the sealed transform range and seed.
+func buildSealedLayout(ra io.ReaderAt, size int64, limits ReaderLimits) (sealedLayout, error) {
 	var layout sealedLayout
 	if ra == nil {
 		return layout, ErrNilReader
@@ -255,10 +257,6 @@ func buildSealedLayoutWithOptions(ra io.ReaderAt, size int64, trailerMode Traile
 
 	if size < headerSize {
 		return layout, fmt.Errorf("%w: short header", ErrInvalidHeader)
-	}
-
-	if err := validateTrailerMode(trailerMode); err != nil {
-		return layout, err
 	}
 
 	_, _, tableOffset, err := parseHeaderSection(ra, size, limits)
@@ -270,76 +268,16 @@ func buildSealedLayoutWithOptions(ra io.ReaderAt, size int64, trailerMode Traile
 		return layout, fmt.Errorf("%w: sealed header offset is out of range", ErrInvalidHeader)
 	}
 
-	if tableOffset >= sealedBlockSize {
-		return layout, fmt.Errorf("%w: sealed header offset exceeds first transform block", ErrInvalidHeader)
-	}
-
-	makeLayout := func(transformSize int64) (sealedLayout, error) {
-		var result sealedLayout
-		if transformSize < headerSize || uint64(transformSize) > uint64(math.MaxUint32) {
-			return result, ErrSizeOverflow
-		}
-		if tableOffset > transformSize {
-			return result, fmt.Errorf("%w: sealed header offset is out of range", ErrInvalidHeader)
-		}
-
-		seedValue, err := checkedInt64ToUint32(transformSize)
-		if err != nil {
-			return result, err
-		}
-
-		result.headerSkip = tableOffset
-		result.transformSize = transformSize
-		result.seed = sealedSeed(seedValue)
-
-		return result, nil
-	}
-
-	if trailerMode == TrailerModeAbsent {
-		return makeLayout(size)
-	}
-
-	if size < sealedTrailerSize {
-		if trailerMode == TrailerModePresent {
-			return layout, ErrTrailerTooShort
-		}
-
-		return makeLayout(size)
-	}
-
-	var tail [sealedTrailerSize]byte
-	if _, err := ra.ReadAt(tail[:], size-sealedTrailerSize); err != nil {
-		return layout, fmt.Errorf("read trailer candidate: %w", err)
-	}
-
-	if tail[0] != 0 {
-		if trailerMode == TrailerModePresent {
-			return layout, ErrInvalidTrailerPrefix
-		}
-
-		return makeLayout(size)
-	}
-
-	candidate, err := makeLayout(size - sealedTrailerSize)
+	seedValue, err := checkedInt64ToUint32(size)
 	if err != nil {
 		return layout, err
 	}
-	if trailerMode == TrailerModePresent {
-		return candidate, nil
-	}
 
-	verified, ok, err := verifySHA1Trailer(ra, size)
-	if err != nil {
-		return layout, fmt.Errorf("verify sealed trailer candidate: %w", err)
-	}
+	layout.headerSkip = tableOffset
+	layout.transformEnd = maxInt64(0, size-sealedDigestSize)
+	layout.seed = sealedSeed(seedValue)
 
-	var stored [20]byte
-	copy(stored[:], tail[1:])
-	if ok && verified == stored {
-		return candidate, nil
-	}
-
-	return makeLayout(size)
+	return layout, nil
 }
 
 // validateTrailerMode rejects unsupported optional-trailer policies.
@@ -361,7 +299,7 @@ func applySealedTransformInPlace(data []byte, sealedKeyValue *SealedKey) error {
 		return nil
 	}
 
-	layout, err := buildSealedLayoutWithOptions(bytes.NewReader(data), int64(len(data)), TrailerModeAuto, ReaderLimits{})
+	layout, err := buildSealedLayout(bytes.NewReader(data), int64(len(data)), ReaderLimits{})
 	if err != nil {
 		return err
 	}
@@ -378,7 +316,7 @@ func applySealedRangeInPlace(data []byte, offset int64, layout sealedLayout, key
 	}
 
 	rangeStart := maxInt64(offset, layout.headerSkip)
-	rangeEnd := minInt64(offset+int64(len(data)), layout.transformSize)
+	rangeEnd := minInt64(offset+int64(len(data)), layout.transformEnd)
 	if rangeStart >= rangeEnd {
 		return
 	}
@@ -404,18 +342,14 @@ func applySealedRangeInPlace(data []byte, offset int64, layout sealedLayout, key
 
 // sealedSegmentAt resolves transform segment boundaries for a file offset.
 func sealedSegmentAt(layout sealedLayout, pos int64) (segmentStart int64, segmentEnd int64, streamPos uint32) {
-	if pos < sealedBlockSize {
-		segmentStart = layout.headerSkip
-		segmentEnd = minInt64(sealedBlockSize, layout.transformSize)
-
-		return segmentStart, segmentEnd, 0
-	}
-
 	segmentStart = (pos / sealedBlockSize) * sealedBlockSize
-	segmentEnd = minInt64(segmentStart+sealedBlockSize, layout.transformSize)
+	segmentEnd = minInt64(segmentStart+sealedBlockSize, layout.transformEnd)
 	streamPos, err := checkedInt64ToUint32(segmentStart)
 	if err != nil {
 		return segmentStart, segmentEnd, 0
+	}
+	if segmentStart < layout.headerSkip {
+		segmentStart = layout.headerSkip
 	}
 
 	return segmentStart, segmentEnd, streamPos

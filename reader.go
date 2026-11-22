@@ -233,7 +233,7 @@ func (r *Reader) SHA1Trailer() ([20]byte, bool) {
 			return
 		}
 
-		got, ok, err := verifySHA1Trailer(r.rawReaderAt(), r.size)
+		got, ok, err := verifySHA1Trailer(r.ra, r.size)
 		r.trailerVerified = err == nil && ok && got == r.sha1Trailer
 		if plainArchive {
 			switch {
@@ -276,15 +276,6 @@ func (r *Reader) TrailerStatus() TrailerStatus {
 	}
 
 	return TrailerStatusAbsent
-}
-
-// rawReaderAt returns the encoded source beneath an optional sealed decoder.
-func (r *Reader) rawReaderAt() io.ReaderAt {
-	if sealed, ok := r.ra.(*sealedReaderAt); ok {
-		return sealed.source
-	}
-
-	return r.ra
 }
 
 // parse reads and validates PBO structure from ReaderAt.

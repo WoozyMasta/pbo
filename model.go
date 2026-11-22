@@ -95,7 +95,7 @@ type HeaderPair struct {
 	Value string `json:"value" yaml:"value"`
 }
 
-// SealedKey is a fixed 16-byte key used by optional sealed transform mode.
+// SealedKey is a fixed 16-byte key used by the sealed transform.
 type SealedKey [16]byte
 
 // PackEntryProgress contains one completed entry write event from pack flow.
@@ -120,7 +120,7 @@ type PackEntryProgress struct {
 type PackOptions struct {
 	// OnEntryDone is called after one entry is fully written to archive payload.
 	OnEntryDone func(entry PackEntryProgress) `json:"-" yaml:"-"`
-	// SealedKey enables sealed archive transform when set.
+	// SealedKey enables the sealed transform when set.
 	// Nil keeps standard plain PBO read/write behavior.
 	SealedKey *SealedKey `json:"sealed_key,omitempty" yaml:"sealed_key,omitempty"`
 	// signHashGameType is the game type used for inline file hash during pack; set by PackAndHash*.
@@ -193,7 +193,7 @@ const (
 type TrailerMode string
 
 const (
-	// TrailerModeAuto detects a structurally plausible trailer and verifies sealed layouts.
+	// TrailerModeAuto detects a structurally plausible PBO trailer without hashing it.
 	TrailerModeAuto TrailerMode = "auto"
 	// TrailerModePresent forces the reader to treat the final 21 bytes as a trailer.
 	TrailerModePresent TrailerMode = "present"
@@ -226,8 +226,9 @@ type ReaderOptions struct {
 	// SealedKey enables sealed archive decode when set.
 	// Nil keeps standard plain PBO read behavior.
 	SealedKey *SealedKey `json:"sealed_key,omitempty" yaml:"sealed_key,omitempty"`
-	// TrailerMode controls optional SHA1 trailer detection. Auto is the default;
-	// for sealed archives it verifies a zero-prefixed candidate to select the seed.
+	// TrailerMode controls optional PBO SHA1 trailer detection after decoding.
+	// Auto is the default and detects a structurally plausible decoded trailer
+	// without hashing it during open.
 	TrailerMode TrailerMode `json:"trailer_mode,omitempty" yaml:"trailer_mode,omitempty"`
 	// OffsetMode controls whether stored index offsets are used.
 	OffsetMode OffsetMode `json:"offset_mode,omitempty" yaml:"offset_mode,omitempty"`

@@ -199,8 +199,8 @@ func ReadHeadersFromReaderAt(ra io.ReaderAt, size int64) ([]HeaderPair, error) {
 }
 
 // ReadHeadersFromReaderAtWithOptions reads only PBO header key-value pairs from a random-access source.
-// Sealed headers are read directly because the header section is not transformed;
-// automatic trailer verification is unnecessary for this metadata-only operation.
+// Sealed headers are read directly because the header section is not transformed.
+// A forced trailer-prefix check reads through the sealed decoder.
 func ReadHeadersFromReaderAtWithOptions(ra io.ReaderAt, size int64, opts ReaderOptions) ([]HeaderPair, error) {
 	opts.applyDefaults()
 
@@ -216,20 +216,24 @@ func ReadHeadersFromReaderAtWithOptions(ra io.ReaderAt, size int64, opts ReaderO
 	}
 	sealed := parseSealedKey(opts.SealedKey).enabled
 
-	_, headers, tableOffset, err := parseHeaderSection(ra, size, opts.Limits)
+	_, headers, _, err := parseHeaderSection(ra, size, opts.Limits)
 	if err != nil {
 		return nil, err
-	}
-	if sealed && tableOffset >= sealedBlockSize {
-		return nil, fmt.Errorf("%w: sealed header offset exceeds first transform block", ErrInvalidHeader)
 	}
 	if sealed && opts.TrailerMode == TrailerModePresent {
 		if size < sealedTrailerSize {
 			return nil, ErrTrailerTooShort
 		}
 
+		decoded, err := prepareReaderAtWithSealedOptions(
+			ra, size, opts.SealedKey, opts.TrailerMode, opts.Limits,
+		)
+		if err != nil {
+			return nil, err
+		}
+
 		var tail [sealedTrailerSize]byte
-		if _, err := ra.ReadAt(tail[:], size-sealedTrailerSize); err != nil {
+		if _, err := decoded.ReadAt(tail[:], size-sealedTrailerSize); err != nil {
 			return nil, fmt.Errorf("read trailer candidate: %w", err)
 		}
 		if tail[0] != 0 {

@@ -371,6 +371,10 @@ func (e *Editor) commitToFile(ctx context.Context, dstFile *os.File) (*PackResul
 		return nil, fmt.Errorf("write SHA1 trailer: %w", err)
 	}
 
+	if err := applySealedTransformToWriteSeeker(dstFile, packOpts.SealedKey); err != nil {
+		return nil, err
+	}
+
 	if err := dstFile.Sync(); err != nil {
 		return nil, fmt.Errorf("sync destination archive: %w", err)
 	}

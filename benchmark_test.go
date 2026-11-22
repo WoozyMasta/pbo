@@ -554,7 +554,7 @@ func BenchmarkSealedTransform64MiBCountingIO(b *testing.B) {
 	for b.Loop() {
 		ra := &countingReaderAt{ReaderAt: bytes.NewReader(data)}
 		wa := &countingWriterAt{data: data}
-		if err := applySealedTransformToReadWriteAt(ra, wa, int64(len(data)), &key, false); err != nil {
+		if err := applySealedTransformToReadWriteAt(ra, wa, int64(len(data)), &key); err != nil {
 			b.Fatal(err)
 		}
 		readCalls = ra.calls

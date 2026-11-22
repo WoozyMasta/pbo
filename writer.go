@@ -71,11 +71,8 @@ type rewriteArchiveResult struct {
 	dataStart     int64  // payload start offset in the written file
 }
 
-// computeHash1ForFile returns hash1 over PBO content.
-// When sealing is active the on-disk bytes differ from what was written,
-// so the full file is re-read.
-// Otherwise the fixed sections are taken from memory
-// and only the payload region is read from ra, avoiding re-reading header and index.
+// computeHash1ForFile returns hash1 over plain PBO content before the sealed transform is applied.
+// Sealed output is re-read because the hash covers the exact serialized PBO bytes.
 func computeHash1ForFile(
 	details *rewriteArchiveResult,
 	ra io.ReaderAt, fileEnd int64,
@@ -123,6 +120,7 @@ func Pack(ctx context.Context, out io.WriteSeeker, inputs []Input, opts PackOpti
 	if err != nil {
 		return nil, err
 	}
+
 	if _, err := out.Seek(0, io.SeekEnd); err != nil {
 		return nil, fmt.Errorf("seek end after pack: %w", err)
 	}
@@ -159,8 +157,12 @@ func PackFile(ctx context.Context, outPath string, inputs []Input, opts PackOpti
 		if _, err := f.WriteAt(trailer[:], fileEnd); err != nil {
 			return fmt.Errorf("write SHA1 trailer: %w", err)
 		}
-		result = details.packResult
 
+		if err := applySealedTransformToWriteSeeker(f, opts.SealedKey); err != nil {
+			return err
+		}
+
+		result = details.packResult
 		return nil
 	})
 	if err != nil {
@@ -236,6 +238,10 @@ func PackAndHash(
 	copy(hs.Hash2[:], computeSignHash2(hash1, nameHash, prefix))
 	copy(hs.Hash3[:], computeSignHash3(fileHash, nameHash, prefix))
 
+	if err := applySealedTransformToWriteSeeker(out, opts.SealedKey); err != nil {
+		return nil, hs, err
+	}
+
 	return details.packResult, hs, nil
 }
 
@@ -297,8 +303,12 @@ func PackAndHashFile(
 		if _, err := f.WriteAt(trailer[:], fileEnd); err != nil {
 			return fmt.Errorf("write SHA1 trailer: %w", err)
 		}
-		result = details.packResult
 
+		if err := applySealedTransformToWriteSeeker(f, opts.SealedKey); err != nil {
+			return err
+		}
+
+		result = details.packResult
 		return nil
 	})
 	if err != nil {
@@ -586,7 +596,7 @@ func writeInputPayload(
 	return writeProfiledCandidatePayload(dst, selection.source, in, opts, selection.bounds, currentOffset, copyBuf)
 }
 
-// rewriteArchive is shared writer core for Pack and editor commit flows.
+// rewriteArchive writes a PBO and applies the configured sealed transform.
 func rewriteArchive(
 	ctx context.Context,
 	out io.WriteSeeker,
@@ -596,6 +606,9 @@ func rewriteArchive(
 ) (*PackResult, error) {
 	details, err := rewriteArchiveDetailed(ctx, out, src, rewritePlan, opts)
 	if err != nil {
+		return nil, err
+	}
+	if err := applySealedTransformToWriteSeeker(out, opts.SealedKey); err != nil {
 		return nil, err
 	}
 
@@ -858,10 +871,6 @@ func rewriteArchiveDetailed(
 		if _, err := out.Write(indexBuf); err != nil {
 			return nil, fmt.Errorf("write entry index: %w", err)
 		}
-	}
-
-	if err := applySealedTransformToWriteSeeker(out, opts.SealedKey); err != nil {
-		return nil, err
 	}
 
 	return &rewriteArchiveResult{

@@ -52,20 +52,17 @@ func computeHashSetFromReader(r *Reader, version SignVersion, gameType GameType)
 		return HashSet{}, ErrNilReader
 	}
 
-	hashRA := r.rawReaderAt()
 	var hash1 []byte
-	if _, sealed := r.ra.(*sealedReaderAt); sealed {
-		// Sealed signing keeps its existing raw-byte behavior
-		// until its format contract is researched separately.
+	payloadEnd := expectedPayloadEnd(r.entries, r.dataStart)
+	if _, sealed := r.ra.(*sealedReaderAt); sealed && !r.trailerCandidate {
 		var err error
-		hash1, err = computeSignHash1(hashRA, r.size, r.trailerCandidate)
+		hash1, err = computeSignHash1(r.ra, r.size, false)
 		if err != nil {
 			return HashSet{}, fmt.Errorf("hash1: %w", err)
 		}
 	} else {
-		payloadEnd := expectedPayloadEnd(r.entries, r.dataStart)
 		var err error
-		hash1, err = computeSignHash1ForSigning(hashRA, r.size, payloadEnd)
+		hash1, err = computeSignHash1ForSigning(r.ra, r.size, payloadEnd)
 		if err != nil {
 			return HashSet{}, fmt.Errorf("hash1: %w", err)
 		}
